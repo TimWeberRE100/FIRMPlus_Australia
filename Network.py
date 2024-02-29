@@ -54,6 +54,7 @@ def Transmission(solution, output=False):
     TDC = np.vstack((FQ, NQ, NS, NV, AS, SW, TV)).transpose() # TDC(t, k), MW
 
     """ if output:
+
         MStorage = np.tile(solution.Storage, (nodes, 1)).transpose() * pcfactor # SPH(t, j), MWh
         MDischargeD = np.tile(solution.DischargeD, (nodes, 1)).transpose() * pcfactorD  # MDischargeD: DD(j, t)
         MStorageD = np.tile(solution.StorageD, (nodes, 1)).transpose() * pcfactorD  # SD(t, j), MWh

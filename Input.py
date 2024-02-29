@@ -50,7 +50,7 @@ if scenario<=17:
 
     Nodel_int, PVl_int, Windl_int = [x[np.where(Nodel==node)[0]] for x in (Nodel_int, PVl_int, Windl_int)]
     Nodel, PVl, Windl = [x[np.where(x==node)[0]] for x in (Nodel, PVl, Windl)]
-
+    
 intervals, nodes = MLoad.shape
 years = int(resolution * intervals / 8760)
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
@@ -148,30 +148,3 @@ class Solution:
         """S = Solution(list(np.ones(64))) >> print(S)"""
         return 'Solution({})'.format(self.x)
 
-""" class Solution:
-    A candidate solution of decision variables CPV(i), CWind(i), CPHP(j), S-CPHS(j)
-
-    def __init__(self, x):
-        self.x = x
-        self.MLoad = MLoad
-        self.intervals, self.nodes = (intervals, nodes)
-        self.resolution = resolution
-
-        self.CPV = list(x[: pidx]) # CPV(i), GW
-        self.CWind = list(x[pidx: widx]) # CWind(i), GW
-        self.GPV = TSPV * np.tile(self.CPV, (intervals, 1)) * pow(10, 3) # GPV(i, t), GW to MW
-        self.GWind = TSWind * np.tile(self.CWind, (intervals, 1)) * pow(10, 3) # GWind(i, t), GW to MW
-
-        self.CPHP = list(x[widx: sidx]) # CPHP(j), GW
-        self.CPHS = x[sidx] # S-CPHS(j), GWh
-        self.efficiency = efficiency
-
-        self.Nodel, self.PVl, self.Windl = (Nodel, PVl, Windl)
-        self.scenario = scenario
-
-        self.GBaseload, self.CPeak = (GBaseload, CPeak)
-        self.CHydro = CHydro # GW, GWh
-
-    def __repr__(self):
-        S = Solution(list(np.ones(64))) >> print(S)
-        return 'Solution({})'.format(self.x) """

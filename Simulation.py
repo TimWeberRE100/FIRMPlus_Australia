@@ -8,26 +8,26 @@ from numba import jit
 
 @jit(nopython=True)
 def Reliability(solution, flexible):
-
+    # Flexible must be 2D of shape (intervals, N) where N is broadcastable to nvec
     Netload = (solution.MLoad.sum(axis=1) - solution.GPV.sum(axis=1) - solution.GWind.sum(axis=1) - solution.GBaseload.sum(axis=1)) - flexible # Sj-ENLoad(j, t)
 
-    length = len(Netload)
+    length, nvec = solution.intervals, solution.nvec
 
-    Pcapacity = solution.CPHP.sum() * 1000 # S-CPHP(j), GW to MW
+    Pcapacity = solution.CPHP.sum(axis=0) * 1000 # S-CPHP(j), GW to MW
     Scapacity = solution.CPHS * 1000 # S-CPHS(j), GWh to MWh
+    efficiency, resolution = solution.efficiency, solution.resolution 
 
-    Discharge = np.zeros(length)
-    Charge = np.zeros(length)
-    Storage = np.zeros(length)
+    Discharge = np.zeros((length, nvec))
+    Charge = np.zeros((length, nvec))
+    Storage = np.zeros((length, nvec))
 
     for t in range(length):
-
         Netloadt = Netload[t]
         Storaget_1 = Storage[t-1] if t>0 else 0.5 * Scapacity
 
-        Discharget = min(max(0, Netloadt), Pcapacity, Storaget_1 / solution.resolution)
-        Charget = min(-1 * min(0, Netloadt), Pcapacity, (Scapacity - Storaget_1) / solution.efficiency / solution.resolution)
-        Storaget = Storaget_1 - Discharget * solution.resolution + Charget * solution.resolution * solution.efficiency
+        Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
+        Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
+        Storaget = Storaget_1 + (Charget * efficiency - Discharget) * resolution
 
         Discharge[t] = Discharget
         Charge[t] = Charget
@@ -36,11 +36,11 @@ def Reliability(solution, flexible):
     Deficit = np.maximum(Netload - Discharge, 0)
     Spillage = -1 * np.minimum(Netload + Charge, 0)
 
-    solution.flexible = np.atleast_2d(flexible)
-    solution.Spillage = np.atleast_2d(Spillage)
-    solution.Charge = np.atleast_2d(Charge)
-    solution.Discharge = np.atleast_2d(Discharge)
-    solution.Storage = np.atleast_2d(Storage)
-    solution.Deficit = np.atleast_2d(Deficit)
+    solution.flexible = flexible
+    solution.Spillage = Spillage
+    solution.Charge = Charge
+    solution.Discharge = Discharge
+    solution.Storage = Storage
+    solution.Deficit = Deficit
 
     return Deficit

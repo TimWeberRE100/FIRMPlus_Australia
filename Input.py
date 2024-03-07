@@ -5,7 +5,7 @@
 
 import numpy as np
 from Optimisation import scenario
-from numba import float64, int32, types, int64
+from numba import jit, float64, int32, types, int64
 from numba.experimental import jitclass
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
@@ -34,6 +34,8 @@ CPeak = CHydro + CBio - CBaseload # GW
 
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
 DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400]) * 0.03 * pow(10, -3)
+CDC6max = 3 * 0.63 # GW
+
 
 efficiency = 0.8
 factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
@@ -82,6 +84,48 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 #%%
+from Simulation import Reliability 
+from Network import Transmission
+
+@jit(nopython=True)
+def F(S):
+    nvec = S.nvec
+    
+    Deficit = Reliability(S, flexible=np.zeros((intervals, 1) , dtype=np.float64)) # Sj-EDE(t, j), MW
+    Flexible = Deficit.sum(axis=0) * resolution / years / efficiency # MWh p.a.
+    Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
+    PenHydro = np.maximum(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
+
+    Deficit = Reliability(S, flexible=np.ones((intervals, 1), dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
+    PenDeficit = np.maximum(0, Deficit.sum(axis=0) * resolution) # MWh
+
+    TDC = Transmission(S) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
+    TDC_abs = np.atleast_3d(np.abs(TDC))
+
+    CDC = np.zeros((len(DCloss), nvec), dtype=np.float64)
+    for i in range(intervals):
+        for j in range(len(DCloss)):
+            CDC[j, :] = np.maximum(TDC_abs[i, j, :], CDC[j,:])
+    CDC = CDC * 0.001 # CDC(k), MW to GW
+    PenDC = np.maximum(0, CDC[6,:] - CDC6max) * 0.001 # GW to MW
+
+    # numba is fussy about generation of tuples and about stacking arrays of different dimensions
+    costitems = np.vstack((S.CPV.sum(axis=0), S.CWind.sum(axis=0), S.CPHP.sum(axis=0), S.CPHS,
+                            S.CPV.sum(axis=0), S.CWind.sum(axis=0), Hydro * 0.000001,
+                            np.repeat(-1.0, nvec), np.repeat(-1.0, nvec),))
+    costitems = np.vstack((costitems, CDC))
+    reindex = np.concatenate((np.arange(4), np.arange(9, 16), np.arange(4, 9)))
+
+    cost = factor.reshape(-1,1) * costitems[reindex]
+    cost = cost.sum(axis=0)
+
+    loss = TDC_abs.sum(axis=0) * DCloss.reshape(-1,1)
+    loss = loss.sum(axis=0) * 0.000000001 * resolution / years # PWh p.a.
+    LCOE = cost / np.abs(energy - loss)
+    
+    return LCOE, (PenHydro+PenDeficit+PenDC)
+
+
 # Specify the types for jitclass
 solution_spec = [
     ('x', float64[:,:]),  # x is 2d array
@@ -114,7 +158,9 @@ solution_spec = [
     ('Charge', float64[:,:]),
     ('Storage', float64[:,:]),
     ('Deficit', float64[:,:]),
-    ('Spillage', float64[:,:])
+    ('Spillage', float64[:,:]),
+    ('Penalties', float64[:]),
+    ('Lcoe', float64[:]),
 ]
 
 @jitclass(solution_spec)
@@ -123,7 +169,6 @@ class Solution:
     
     def __init__(self, x):
         # input vector should have shape (sidx+1, n) i.e. vertical input vectors
-
         self.x = x
         self.nvec = x.shape[1]
         
@@ -160,6 +205,8 @@ class Solution:
         self.CPeak = CPeak
         self.CHydro = CHydro
         #self.EHydro = EHydro
+
+        self.Lcoe, self.Penalties = F(self)
 
 
     # # Not currently supported by jitclass

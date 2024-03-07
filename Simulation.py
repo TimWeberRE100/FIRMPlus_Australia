@@ -21,20 +21,22 @@ def Reliability(solution, flexible):
     Charge = np.zeros((length, nvec))
     Storage = np.zeros((length, nvec))
 
+    zero = np.zeros(1, dtype=np.float64)
+
     for t in range(length):
         Netloadt = Netload[t]
         Storaget_1 = Storage[t-1] if t>0 else 0.5 * Scapacity
 
-        Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
-        Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
+        Discharget = np.minimum(np.minimum(np.maximum(zero, Netloadt), Pcapacity), Storaget_1 / resolution)
+        Charget = np.minimum(np.minimum(-1 * np.minimum(zero, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
         Storaget = Storaget_1 + (Charget * efficiency - Discharget) * resolution
 
         Discharge[t] = Discharget
         Charge[t] = Charget
         Storage[t] = Storaget
 
-    Deficit = np.maximum(Netload - Discharge, 0)
-    Spillage = -1 * np.minimum(Netload + Charge, 0)
+    Deficit = np.maximum(Netload - Discharge, zero)
+    Spillage = -1 * np.minimum(Netload + Charge, zero)
 
     solution.flexible = flexible
     solution.Spillage = Spillage

@@ -5,10 +5,10 @@
 
 import datetime as dt
 import csv
-from numba import jit, float64, int32
 import numpy as np
 from argparse import ArgumentParser
 from multiprocessing import cpu_count, Pool
+from memory_profiler import profile
 from scipy.optimize import differential_evolution
 
 parser = ArgumentParser()
@@ -18,6 +18,7 @@ parser.add_argument('-m', default=0.5, type=float, required=False, help='mutatio
 parser.add_argument('-r', default=0.3, type=float, required=False, help='recombination=0.3')
 parser.add_argument('-s', default=21, type=int, required=False, help='11, 12, 13, ...')
 parser.add_argument('-cb', default=0, type=int, required=False, help='Callback: 0-None, 1-generation elites, 2-everything')
+parser.add_argument('-v', default=1, type=int, required=False, help='Boolean - print progress to console')
 parser.add_argument('-vp', default=50, type=int, required=False, help='Maximum number of vectors to send to objective')
 parser.add_argument('-w', default=-1, type=int, required=False, help='Maximum number of cores to parallelise over')
 
@@ -33,11 +34,13 @@ def objective(x):
     """This is the objective function."""
     S = Solution(x)
 
-    return S.Lcoe + S.Penalties
+    # return S.Lcoe + S.Penalties
+    return sum(F(S))
 
+# @profile
 def obj_wrapper(x, callback=False):
     arrs = [x[:, n*vsize: min((n+1)*vsize, npop)] for n in r]
- 
+
     if processes > 1:
         with Pool(processes=processes) as processPool:
             results = processPool.map(objective, arrs)
@@ -62,24 +65,10 @@ def init_callback():
     with open('Results/History{}.csv'.format(scenario), 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
 
-if __name__=='__main__':
+def optimise():
     starttime = dt.datetime.now()
     print("Optimisation starts at", starttime)
-    
-    lb = [0.]  * pzones + [0.]   * wzones + contingency   + [0.]
-    ub = [50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.]
-    
-    npop = x.shape[1]
-    processes = cpu_count() if args.w == -1 else cpu_count()//2 if args.w ==-2 else args.w
-    processes = min(npop, processes)
-    
-    vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
-    vsize = min(vsize, args.vp, npop)
-    r = range(npop//vsize + 1) if npop%vsize != 0 else range(npop//vsize)
-    #TODO 
-    # make vsize smaller if no. slices is only a few larger than no. processes
-    
-    
+
     result = differential_evolution(
         func=obj_wrapper, 
         args=(args.cb==2,),
@@ -89,12 +78,34 @@ if __name__=='__main__':
         popsize=args.p, 
         mutation=args.m, 
         recombination=args.r,
-        disp=True, 
+        disp=bool(args.v), 
         polish=False, 
         updating='deferred', 
         vectorized=True,
         callback=callback if args.cb == 1 else None
         )
-
+    
     endtime = dt.datetime.now()
+    time = endtime-starttime
     print("Optimisation took", endtime - starttime)
+
+if __name__=='__main__':
+
+    lb = [0.]  * pzones + [0.]   * wzones + contingency   + [0.]
+    ub = [50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.]
+    
+    npop = args.p * len(lb)
+    processes = cpu_count() if args.w == -1 else cpu_count()//2 if args.w ==-2 else args.w
+    processes = min(npop, processes)
+    
+    vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
+    vsize = min(vsize, args.vp, npop)
+    r = range(npop//vsize + 1) if npop%vsize != 0 else range(npop//vsize)
+    #TODO 
+    # make vsize smaller if no. slices is only a few larger than no. processes
+    # this will reduce load on each process and avoid waiting for just one extra process 
+    
+    result, time = optimise()
+
+
+

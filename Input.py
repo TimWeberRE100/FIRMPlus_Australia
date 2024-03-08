@@ -7,6 +7,7 @@ import numpy as np
 from Optimisation import scenario
 from numba import jit, float64, int32, types, int64
 from numba.experimental import jitclass
+from memory_profiler import profile
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
 PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)
@@ -88,6 +89,7 @@ from Simulation import Reliability
 from Network import Transmission
 
 @jit(nopython=True)
+# @profile
 def F(S):
     nvec = S.nvec
     
@@ -99,8 +101,8 @@ def F(S):
     Deficit = Reliability(S, flexible=np.ones((intervals, 1), dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
     PenDeficit = np.maximum(0, Deficit.sum(axis=0) * resolution) # MWh
 
-    TDC = Transmission(S) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
-    TDC_abs = np.atleast_3d(np.abs(TDC))
+    TDC_abs = Transmission(S) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
+    TDC_abs = np.atleast_3d(np.abs(TDC_abs))
 
     CDC = np.zeros((len(DCloss), nvec), dtype=np.float64)
     for i in range(intervals):
@@ -206,7 +208,7 @@ class Solution:
         self.CHydro = CHydro
         #self.EHydro = EHydro
 
-        self.Lcoe, self.Penalties = F(self)
+
 
 
     # # Not currently supported by jitclass

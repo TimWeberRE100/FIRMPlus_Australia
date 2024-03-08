@@ -86,8 +86,10 @@ def optimise():
         )
     
     endtime = dt.datetime.now()
-    time = endtime-starttime
-    print("Optimisation took", endtime - starttime)
+    timetaken = endtime-starttime
+    print("Optimisation took", timetaken)
+
+    return result, timetaken
 
 if __name__=='__main__':
 

@@ -7,7 +7,6 @@ import numpy as np
 from Optimisation import scenario
 from numba import jit, float64, int32, types, int64
 from numba.experimental import jitclass
-from memory_profiler import profile
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
 PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)
@@ -84,12 +83,15 @@ energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
+
+lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.])
+ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.])
+
 #%%
 from Simulation import Reliability 
 from Network import Transmission
 
 @jit(nopython=True)
-# @profile
 def F(S):
     nvec = S.nvec
     
@@ -208,7 +210,7 @@ class Solution:
         self.CHydro = CHydro
         #self.EHydro = EHydro
 
-
+        self.Lcoe, self.Penalties = F(self)
 
 
     # # Not currently supported by jitclass

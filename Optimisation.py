@@ -8,7 +8,6 @@ import csv
 import numpy as np
 from argparse import ArgumentParser
 from multiprocessing import cpu_count, Pool
-from memory_profiler import profile
 from scipy.optimize import differential_evolution
 
 parser = ArgumentParser()
@@ -34,10 +33,9 @@ def objective(x):
     """This is the objective function."""
     S = Solution(x)
 
-    # return S.Lcoe + S.Penalties
-    return sum(F(S))
+    return S.Lcoe + S.Penalties
 
-# @profile
+
 def obj_wrapper(x, callback=False):
     arrs = [x[:, n*vsize: min((n+1)*vsize, npop)] for n in r]
 
@@ -65,7 +63,7 @@ def init_callback():
     with open('Results/History{}.csv'.format(scenario), 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
 
-def optimise():
+def Optimise(args=args):
     starttime = dt.datetime.now()
     print("Optimisation starts at", starttime)
 
@@ -93,9 +91,6 @@ def optimise():
 
 if __name__=='__main__':
 
-    lb = [0.]  * pzones + [0.]   * wzones + contingency   + [0.]
-    ub = [50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.]
-    
     npop = args.p * len(lb)
     processes = cpu_count() if args.w == -1 else cpu_count()//2 if args.w ==-2 else args.w
     processes = min(npop, processes)
@@ -107,7 +102,7 @@ if __name__=='__main__':
     # make vsize smaller if no. slices is only a few larger than no. processes
     # this will reduce load on each process and avoid waiting for just one extra process 
     
-    result, time = optimise()
+    result, time = Optimise()
 
 
 

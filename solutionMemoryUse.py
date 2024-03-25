@@ -29,18 +29,19 @@ dvs = len(lb)
 
 unnorm = atleast_2d(ub-lb)
 
-x = rand(width, dvs)*unnorm + atleast_2d(lb)
-
 def objective(x):
     S = Solution(x)
     return S.Lcoe + S.Penalties
 
 if args.w == 1: 
+    x = rand(width, dvs)*unnorm + atleast_2d(lb)
     objective(x)
 
 if args.w > 1:
     
     processes=args.w
+    x = rand(width*processes, dvs)*unnorm + atleast_2d(lb)
+
     npop = x.shape[1]
     
     vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
@@ -51,7 +52,7 @@ if args.w > 1:
     
     from multiprocessing import Pool
     
-    with Pool(process=args.w) as processPool: 
+    with Pool(processes=args.w) as processPool: 
         result = processPool.map(objective, arrs)
     result = array(result)
         

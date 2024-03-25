@@ -5,7 +5,7 @@
 
 import numpy as np
 from Optimisation import scenario
-from numba import jit, float64, int32, types, int64
+from numba import jit, float64, int64, types, prange, boolean
 from numba.experimental import jitclass
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
@@ -17,7 +17,7 @@ _, Nodel_int = np.unique(Nodel, return_inverse=True)
 _, PVl_int = np.unique(Nodel, return_inverse=True)
 _, Windl_int = np.unique(Nodel, return_inverse=True)
 
-Nodel_int, PVl_int, Windl_int = (x.astype(np.int32) for x in (Nodel_int, PVl_int, Windl_int))
+Nodel_int, PVl_int, Windl_int = (x.astype(np.int64) for x in (Nodel_int, PVl_int, Windl_int))
 
 resolution = 0.5
 firstyear, finalyear, timestep = (2020, 2029, 1)
@@ -91,7 +91,7 @@ ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.])
 from Simulation import Reliability 
 from Network import Transmission
 
-@jit(nopython=True)
+@jit(nopython=True)#, parallel=True)
 def F(S):
     nvec = S.nvec
     
@@ -104,12 +104,12 @@ def F(S):
     PenDeficit = np.maximum(0, Deficit.sum(axis=0) * resolution) # MWh
 
     TDC_abs = Transmission(S) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
-    TDC_abs = np.atleast_3d(np.abs(TDC_abs))
+    TDC_abs = np.atleast_3d(np.abs(TDC_abs)).transpose(1,0,2)
 
     CDC = np.zeros((len(DCloss), nvec), dtype=np.float64)
-    for i in range(intervals):
-        for j in range(len(DCloss)):
-            CDC[j, :] = np.maximum(TDC_abs[i, j, :], CDC[j,:])
+    for j in prange(len(DCloss)):
+        for i in range(intervals):
+            CDC[j, :] = np.maximum(TDC_abs[j, i, :], CDC[j,:])
     CDC = CDC * 0.001 # CDC(k), MW to GW
     PenDC = np.maximum(0, CDC[6,:] - CDC6max) * 0.001 # GW to MW
 
@@ -123,7 +123,7 @@ def F(S):
     cost = factor.reshape(-1,1) * costitems[reindex]
     cost = cost.sum(axis=0)
 
-    loss = TDC_abs.sum(axis=0) * DCloss.reshape(-1,1)
+    loss = TDC_abs.sum(axis=1) * DCloss.reshape(-1,1)
     loss = loss.sum(axis=0) * 0.000000001 * resolution / years # PWh p.a.
     LCOE = cost / np.abs(energy - loss)
     
@@ -133,10 +133,10 @@ def F(S):
 # Specify the types for jitclass
 solution_spec = [
     ('x', float64[:,:]),  # x is 2d array
-    ('nvec', int32),
+    ('nvec', int64),
     ('MLoad', float64[:, :, :]),  # 3D array of floats
-    ('intervals', int32),
-    ('nodes', int32),
+    ('intervals', int64),
+    ('nodes', int64),
     ('resolution',float64),
     ('CPV', float64[:, :]), # 2D array of floats
     ('CWind', float64[:, :]), # 2D array of floats
@@ -147,11 +147,11 @@ solution_spec = [
     ('efficiency', float64),
     # ('CInter', float64[:]),
     # ('GInter', float64[:, :]),  # 2D array of floats
-    # ('Interl_int', int32[:]),
+    # ('Interl_int', int64[:]),
     # ('node', types.unicode_type),
-    ('Nodel_int', int32[:]), 
-    ('PVl_int', int32[:]),
-    ('Windl_int', int32[:]),
+    ('Nodel_int', int64[:]), 
+    ('PVl_int', int64[:]),
+    ('Windl_int', int64[:]),
     ('GBaseload', float64[:, :, :]),  # 3D array of floats
     ('CPeak', float64[:]),  # 1D array of floats
     ('CHydro', float64[:]),  # 1D array of floats
@@ -165,6 +165,8 @@ solution_spec = [
     ('Spillage', float64[:,:]),
     ('Penalties', float64[:]),
     ('Lcoe', float64[:]),
+    ('evaluated', boolean),
+    
 ]
 
 @jitclass(solution_spec)
@@ -209,10 +211,13 @@ class Solution:
         self.CPeak = CPeak
         self.CHydro = CHydro
         #self.EHydro = EHydro
+        self.evaluated=False
 
+    # @staticmethod
+    def _evaluate(self):
         self.Lcoe, self.Penalties = F(self)
-
-
+        self.evaluated=True
+        
     # # Not currently supported by jitclass
     # def __repr__(self):
     #     """S = Solution(list(np.ones(64))) >> print(S)"""

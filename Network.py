@@ -4,7 +4,7 @@
 # Correspondence: bin.lu@anu.edu.au
 
 import numpy as np
-from numba import jit, int32
+from numba import jit, int64
 
 @jit(nopython=True)
 def Transmission(solution, output=False):
@@ -28,13 +28,13 @@ def Transmission(solution, output=False):
     defactor = np.divide(solution.MLoad, MLoad_denominator.reshape(-1, 1, 1))
     
     MDeficit = solution.Deficit.copy() # avoids numba error with reshaping below (also MSpillage, MCharge, MDischarge)
-    MDeficit = MDeficit.reshape(intervals, int32(1), nvec)  * defactor # MDeficit: EDE(j, t)
+    MDeficit = MDeficit.reshape(intervals, int64(1), nvec)  * defactor # MDeficit: EDE(j, t)
 
     MPW = MPV + MWind
     MPW_denominator = np.atleast_3d(MPW.sum(axis=1) + 0.000001)
     spfactor = np.divide(MPW, MPW_denominator.transpose(0, 2, 1))
     MSpillage = solution.Spillage.copy()
-    MSpillage = MSpillage.reshape(intervals, nvec, int32(1)).transpose(0, 2, 1) * spfactor # MSpillage: ESP(j, t)
+    MSpillage = MSpillage.reshape(intervals, nvec, int64(1)).transpose(0, 2, 1) * spfactor # MSpillage: ESP(j, t)
 
     CPHP = solution.CPHP
     
@@ -43,8 +43,8 @@ def Transmission(solution, output=False):
     pcfactor[:, dzsm] =  CPHP[:, dzsm] / CPHP[:, dzsm].sum(axis=0)
     
     MCharge, MDischarge = solution.Charge.copy(), solution.Discharge.copy()
-    MDischarge = MDischarge.reshape(intervals, nvec, int32(1)).transpose(0,2,1) * pcfactor # MDischarge: DPH(j, t)
-    MCharge = MCharge.reshape(intervals, nvec, int32(1)).transpose(0,2,1) * pcfactor # MCharge: CHPH(j, t)
+    MDischarge = (MDischarge.reshape(intervals, nvec, int64(1)).transpose(0,2,1) * pcfactor)# MDischarge: DPH(j, t)
+    MCharge = (MCharge.reshape(intervals, nvec, int64(1)).transpose(0,2,1) * pcfactor) # MCharge: CHPH(j, t)
 
     MImport = solution.MLoad + MCharge + MSpillage \
               - MPV - MWind - MBaseload - MPeak - MDischarge - MDeficit # EIM(t, j), MW

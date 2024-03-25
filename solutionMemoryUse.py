@@ -35,12 +35,14 @@ def objective(x):
 
 if args.w == 1: 
     x = rand(width, dvs)*unnorm + atleast_2d(lb)
+    x = x.T
     objective(x)
 
 if args.w > 1:
     
     processes=args.w
     x = rand(width*processes, dvs)*unnorm + atleast_2d(lb)
+    x = x.T
 
     npop = x.shape[1]
     

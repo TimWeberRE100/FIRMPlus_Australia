@@ -32,6 +32,7 @@ from Input import *
 def objective(x):
     """This is the objective function."""
     S = Solution(x)
+    S._evaluate()
 
     return S.Lcoe + S.Penalties
 
@@ -102,7 +103,7 @@ if __name__=='__main__':
     # make vsize smaller if no. slices is only a few larger than no. processes
     # this will reduce load on each process and avoid waiting for just one extra process 
     
-    result, time = Optimise()
+    # result, time = Optimise()
 
 
 

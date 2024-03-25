@@ -6,20 +6,28 @@
 import numpy as np
 from numba import jit
 
-@jit(nopython=True)
+@jit(nopython=True, parallel=True)
 def Reliability(solution, flexible):
-    # Flexible must be 2D of shape (intervals, N) where N is broadcastable to nvec
-    Netload = (solution.MLoad.sum(axis=1) - solution.GPV.sum(axis=1) - solution.GWind.sum(axis=1) - solution.GBaseload.sum(axis=1)) - flexible # Sj-ENLoad(j, t)
+    shape2d = solution.intervals, solution.nvec
+    length, nvec = shape2d
 
-    length, nvec = solution.intervals, solution.nvec
+    # Flexible must be 2D of shape (intervals, N) where N is broadcastable to nvec
+
+    # jit with parallel=True does not support automatic broadcasting
+    Netload = (np.broadcast_to(solution.MLoad.sum(axis=1), shape2d) +
+                np.broadcast_to(solution.GPV.sum(axis=1), shape2d) +
+                np.broadcast_to(solution.GWind.sum(axis=1), shape2d) +
+                np.broadcast_to(solution.GBaseload.sum(axis=1), shape2d) -
+                np.broadcast_to(flexible, shape2d)
+                )
 
     Pcapacity = solution.CPHP.sum(axis=0) * 1000 # S-CPHP(j), GW to MW
     Scapacity = solution.CPHS * 1000 # S-CPHS(j), GWh to MWh
     efficiency, resolution = solution.efficiency, solution.resolution 
 
-    Discharge = np.zeros((length, nvec))
-    Charge = np.zeros((length, nvec))
-    Storage = np.zeros((length, nvec))
+    Discharge = np.zeros(shape2d)
+    Charge = np.zeros(shape2d)
+    Storage = np.zeros(shape2d)
 
     zero = np.zeros(1, dtype=np.float64)
 

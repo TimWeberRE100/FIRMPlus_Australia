@@ -34,13 +34,13 @@ if platform=='linux':
     resource.setrlimit(resource.RLIMIT_DATA, (limit, limit))
     print(f"memory resource limit set to {budget}/{ram/1024//1024} MiB")
     
-
-def _memory_test_run(width, rec=0, rec_lim=3, include_children=False):
+#%% Memory Testing
+def _memory_test_eval(width, rec=0, rec_lim=3, include_children=False):
     # There is a less annoying way to do this, but it was freezing on my computer 
     def _recurse():
         if rec < rec_lim:
             if VERBOSE: print(f'  subprocess error: trying step again (attempt {rec+1}/{rec_lim})')
-            return _memory_test_run(width, rec+1, rec_lim)
+            return _memory_test_eval(width, rec+1, rec_lim)
         else: 
             return None, None
     args.vp = width
@@ -57,13 +57,13 @@ def _memory_test_run(width, rec=0, rec_lim=3, include_children=False):
     
     return mem, (rec+1)
 
-def iterate_memory_test(start, end, inc, prev_mem=None, include_children=False):
+def _memory_test_it(start, end, inc, prev_mem=None, include_children=False):
     assert (end-start)%inc == 0
 
     timesum = timedelta(0)
     for i in range(start, end, inc):
         tstart = datetime.now()
-        mem, rec = _memory_test_run(i, 0 , 2, include_children)
+        mem, rec = _memory_test_eval(i, 0 , 2, include_children)
         if mem is None: 
             break
         timesum += (datetime.now()-tstart)/rec
@@ -82,32 +82,19 @@ def iterate_memory_test(start, end, inc, prev_mem=None, include_children=False):
         
     return i-inc, timesum*inc/i, prev_mem
 
-#%%
-W, args.w = args.w, 1
-if VERBOSE: 
-    print("Beginning test for vectorisation width on a single core.\n","-"*70)
-n=0
-prev_mem = None
-for p in range(5, 4, -1):
-    n, avetime, prev_mem = iterate_memory_test(n+pow(10, p-1), n+pow(10, p), pow(10, p-1), prev_mem)
-
+def memory_test(workers = 1):
+    W, args.w = args.w, workers
+    if VERBOSE: 
+        print("Beginning test for vectorisation width on {workers} core(s).\n{'-'*70}")
+    n=0
+    prev_mem = None
+    for p in range(5, -1, -1):
+        n, avetime, prev_mem = _memory_test_it(n+pow(10, p-1), n+pow(10, p), pow(10, p-1), prev_mem)
     
-print("Maximum no. solutions to be run together on a single core: ",n)
-print("Approximate time to run this order of magnitude of solutions together", avetime)
-
-#%%
-args.w = 2 
-
-if VERBOSE: 
-    print("Beginning test for vectorisation width on two cores.\n","-"*70)
-n=0
-prev_mem = None
-for p in range(8, 3, -1):
-    n, avetime, prev_mem = iterate_memory_test(n+pow(10, p-1), n+pow(10, p), pow(10, p-1), prev_mem, include_children=True)
-    
-print("Maximum no. solutions to be run together on two cores: ", n)
-print("Approximate time to run this order of magnitude of solutions together", avetime)
+    print(f"Maximum no. solutions to be run together on {workers} core(s): {n}")
+    args.w = W
 
 
-#%%
-# test_solution(x.T)
+
+
+

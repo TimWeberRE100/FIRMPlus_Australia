@@ -5,7 +5,7 @@
 
 import numpy as np
 from Optimisation import scenario
-from numba import jit, float64, int64, types, prange, boolean
+from numba import njit, float64, int64, prange, boolean
 from numba.experimental import jitclass
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
@@ -88,22 +88,23 @@ lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.])
 ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.])
 
 #%%
-from Simulation import Reliability 
-from Network import Transmission
+from Simulation import Reliability, VReliability
+from Network import Transmission, VTransmission
 
-@jit(nopython=True)#, parallel=True)
-def F(S):
+@njit()
+def vF(S):
+    assert S.vectorised is True
     nvec = S.nvec
     
-    Deficit = Reliability(S, flexible=np.zeros((intervals, 1) , dtype=np.float64)) # Sj-EDE(t, j), MW
+    Deficit = VReliability(S, flexible=np.zeros((intervals, 1) , dtype=np.float64)) # Sj-EDE(t, j), MW
     Flexible = Deficit.sum(axis=0) * resolution / years / efficiency # MWh p.a.
     Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
     PenHydro = np.maximum(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
 
-    Deficit = Reliability(S, flexible=np.ones((intervals, 1), dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
+    Deficit = VReliability(S, flexible=np.ones((intervals, 1), dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
     PenDeficit = np.maximum(0, Deficit.sum(axis=0) * resolution) # MWh
 
-    TDC_abs = Transmission(S) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
+    TDC_abs = VTransmission(S) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
     TDC_abs = np.atleast_3d(np.abs(TDC_abs)).transpose(1,0,2)
 
     CDC = np.zeros((len(DCloss), nvec), dtype=np.float64)
@@ -131,7 +132,7 @@ def F(S):
 
 
 # Specify the types for jitclass
-solution_spec = [
+vsolution_spec = [
     ('x', float64[:,:]),  # x is 2d array
     ('nvec', int64),
     ('MLoad', float64[:, :, :]),  # 3D array of floats
@@ -145,18 +146,12 @@ solution_spec = [
     ('CPHP', float64[:, :]),
     ('CPHS', float64[:]),
     ('efficiency', float64),
-    # ('CInter', float64[:]),
-    # ('GInter', float64[:, :]),  # 2D array of floats
-    # ('Interl_int', int64[:]),
-    # ('node', types.unicode_type),
     ('Nodel_int', int64[:]), 
     ('PVl_int', int64[:]),
     ('Windl_int', int64[:]),
     ('GBaseload', float64[:, :, :]),  # 3D array of floats
     ('CPeak', float64[:]),  # 1D array of floats
     ('CHydro', float64[:]),  # 1D array of floats
-    ('EHydro', float64[:]),  # 1D array of floats
-    ('allowance', float64),
     ('flexible', float64[:,:]),
     ('Discharge', float64[:,:]),
     ('Charge', float64[:,:]),
@@ -166,15 +161,27 @@ solution_spec = [
     ('Penalties', float64[:]),
     ('Lcoe', float64[:]),
     ('evaluated', boolean),
-    
+    ('vectorised',boolean),
+    ('MPV', float64[:, :, :]),
+    ('MWind', float64[:, :, :]),
+    ('MBaseload', float64[:, :, :]),
+    ('MPeak', float64[:, :, :]),
+    ('MDischarge', float64[:, :, :]),
+    ('MCharge', float64[:, :, :]),
+    ('MStorage', float64[:, :, :]),
+    ('MDeficit', float64[:, :, :]),
+    ('MSpillage', float64[:, :, :]),
 ]
 
-@jitclass(solution_spec)
-class Solution:
+@jitclass(vsolution_spec)
+class VSolution:
     #A candidate solution of decision variables CPV(i), CWind(i), CPHP(j), S-CPHS(j)
     
     def __init__(self, x):
         # input vector should have shape (sidx+1, n) i.e. vertical input vectors
+        self.vectorised=True
+        assert x.shape[0] == len(lb)
+        
         self.x = x
         self.nvec = x.shape[1]
         
@@ -192,9 +199,9 @@ class Solution:
         CWind_tiled = np.zeros((intervals, *self.CWind.shape))
         # CInter_tiled = np.zeros((intervals, len(self.CWind)))
         for i in range(intervals):
-            for j in range(len(self.CPV)):
+            for j in prange(len(self.CPV)):
                 CPV_tiled[i, j, :] = self.CPV[j, :]
-            for j in range(len(self.CWind)):
+            for j in prange(len(self.CWind)):
                 CWind_tiled[i, j, :] = self.CWind[j, :]
                 
         self.GPV = TSPV.reshape((*TSPV.shape, 1)) * CPV_tiled * 1000.  # GPV(i, t), GW to MW
@@ -205,20 +212,147 @@ class Solution:
         self.efficiency = efficiency
 
         self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
-        # self.node = node
 
         self.GBaseload = GBaseload.reshape(shape3d)
         self.CPeak = CPeak
         self.CHydro = CHydro
-        #self.EHydro = EHydro
         self.evaluated=False
 
     # @staticmethod
     def _evaluate(self):
-        self.Lcoe, self.Penalties = F(self)
+        self.Lcoe, self.Penalties = vF(self)
         self.evaluated=True
         
     # # Not currently supported by jitclass
+    # def __repr__(self):
+    #     """S = Solution(list(np.ones(64))) >> print(S)"""
+    #     return 'Solution({})'.format(self.x)
+
+#%%
+@njit()
+def F(S):
+    assert S.vectorised is False
+    
+    Deficit = Reliability(S, flexible=np.zeros((intervals, ) , dtype=np.float64)) # Sj-EDE(t, j), MW
+    Flexible = Deficit.sum(axis=0) * resolution / years / efficiency # MWh p.a.
+    Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
+    PenHydro = np.maximum(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
+
+    Deficit = Reliability(S, flexible=np.ones((intervals, ), dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
+    PenDeficit = np.maximum(0, Deficit.sum(axis=0) * resolution) # MWh
+
+    TDC_abs = np.abs(Transmission(S)) if scenario>=21 else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
+
+    CDC = np.zeros(len(DCloss), dtype=np.float64)
+    for j in prange(len(DCloss)):
+        for i in range(intervals):
+            CDC[j] = np.maximum(TDC_abs[i, j], CDC[j])
+    CDC = CDC * 0.001 # CDC(k), MW to GW
+    PenDC = max(0, CDC[6] - CDC6max) * 0.001 # GW to MW
+
+    cost = (factor * np.array([S.CPV.sum(), S.CWind.sum(), S.CPHP.sum(), S.CPHS] + list(CDC) +
+                             [S.CPV.sum(), S.CWind.sum(), Hydro * 0.000001, -1, -1])
+            ).sum()
+
+    loss = TDC_abs.sum(axis=0) * DCloss
+    loss = loss.sum(axis=0) * 0.000000001 * resolution / years # PWh p.a.
+    LCOE = cost / np.abs(energy - loss)
+    
+    return LCOE, (PenHydro+PenDeficit+PenDC)
+
+# Specify the types for jitclass
+solution_spec = [
+    ('x', float64[:]),  # x is 1d array
+    ('nvec', int64),
+    ('MLoad', float64[:, :]),  # 2D array of floats
+    ('intervals', int64),
+    ('nodes', int64),
+    ('resolution',float64),
+    ('CPV', float64[:]), # 1D array of floats
+    ('CWind', float64[:]), # 1D array of floats
+    ('GPV', float64[:, :]),  # 2D array of floats
+    ('GWind', float64[:, :]),  # 2D array of floats
+    ('CPHP', float64[:,]),
+    ('CPHS', float64),
+    ('efficiency', float64),
+    ('Nodel_int', int64[:]), 
+    ('PVl_int', int64[:]),
+    ('Windl_int', int64[:]),
+    ('GBaseload', float64[:, :]),  # 2D array of floats
+    ('CPeak', float64[:]),  # 1D array of floats
+    ('CHydro', float64[:]),  # 1D array of floats
+    ('flexible', float64[:]),
+    ('Discharge', float64[:]),
+    ('Charge', float64[:]),
+    ('Storage', float64[:]),
+    ('Deficit', float64[:]),
+    ('Spillage', float64[:]),
+    ('Penalties', float64),
+    ('Lcoe', float64),
+    ('evaluated', boolean),
+    ('vectorised',boolean),
+    ('MPV', float64[:, :]),
+    ('MWind', float64[:, :]),
+    ('MBaseload', float64[:, :]),
+    ('MPeak', float64[:, :]),
+    ('MDischarge', float64[:, :]),
+    ('MCharge', float64[:, :]),
+    ('MStorage', float64[:, :]),
+    ('MDeficit', float64[:, :]),
+    ('MSpillage', float64[:, :]),
+]
+
+@jitclass(solution_spec)
+class Solution:
+    #A candidate solution of decision variables CPV(i), CWind(i), CPHP(j), S-CPHS(j)
+    
+    def __init__(self, x):
+        # input vector should have shape (sidx+1, n) i.e. vertical input vectors
+        self.vectorised=False
+        assert len(x) == len(lb)
+        
+        self.x = x
+        self.nvec = 1
+        
+        self.intervals, self.nodes = intervals, nodes
+        self.resolution = resolution
+       
+        self.MLoad = MLoad
+
+        self.CPV = x[: pidx]  # CPV(i), GW
+        self.CWind = x[pidx: widx]  # CWind(i), GW
+        
+        # Manually replicating np.tile functionality for CPV and CWind
+        CPV_tiled = np.zeros((intervals, len(self.CPV)))
+        CWind_tiled = np.zeros((intervals, len(self.CWind)))
+        # CInter_tiled = np.zeros((intervals, len(self.CWind)))
+        for i in range(intervals):
+            for j in range(len(self.CPV)):
+                CPV_tiled[i, j] = self.CPV[j]
+            for j in range(len(self.CWind)):
+                CWind_tiled[i, j] = self.CWind[j]
+
+        self.GPV = TSPV * CPV_tiled * 1000.  # GPV(i, t), GW to MW
+        self.GWind = TSWind * CWind_tiled * 1000.  # GWind(i, t), GW to MW
+
+
+        self.CPHP = x[widx: sidx]  # CPHP(j), GW
+        self.CPHS = x[sidx]  # S-CPHS(j), GWh
+        self.efficiency = efficiency
+
+        self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
+        
+
+        self.GBaseload = GBaseload
+        self.CPeak = CPeak
+        self.CHydro = CHydro
+        
+        self.evaluated=False
+        
+    def _evaluate(self):
+        self.Lcoe, self.Penalties = F(self)
+        self.evaluated=True
+
     # def __repr__(self):
     #     """S = Solution(list(np.ones(64))) >> print(S)"""
     #     return 'Solution({})'.format(self.x)

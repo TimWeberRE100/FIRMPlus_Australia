@@ -30,7 +30,8 @@ dvs = len(lb)
 unnorm = atleast_2d(ub-lb)
 
 def objective(x):
-    S = Solution(x)
+    S = VSolution(x)
+    S._evaluate()
     return S.Lcoe + S.Penalties
 
 if args.w == 1: 

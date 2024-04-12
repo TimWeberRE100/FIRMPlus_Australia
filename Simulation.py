@@ -13,12 +13,12 @@ def Reliability(solution, flexible, start=None, end=None):
     assert solution.vectorised is False
 
     if start is None and end is None: 
-        Netload = (solution.MLoad.sum(axis=1) + solution.GPV.sum(axis=1) + solution.GWind.sum(axis=1) +
+        Netload = (solution.MLoad.sum(axis=1) - solution.GPV.sum(axis=1) - solution.GWind.sum(axis=1) -
                    solution.GBaseload.sum(axis=1) - flexible)
         intervals = solution.intervals
 
     else: 
-        Netload = ((solution.MLoad.sum(axis=1) + solution.GPV.sum(axis=1) + solution.GWind.sum(axis=1) +
+        Netload = ((solution.MLoad.sum(axis=1) - solution.GPV.sum(axis=1) - solution.GWind.sum(axis=1) -
                    solution.GBaseload.sum(axis=1))[start:end] - flexible)
         intervals = len(Netload)
 
@@ -63,7 +63,7 @@ def VReliability(solution, flexible):
     assert solution.vectorised is True
 
     # Flexible must be 2D of shape (intervals, N) where N is broadcastable to nvec
-    Netload = (solution.MLoad.sum(axis=1) + solution.GPV.sum(axis=1) + solution.GWind.sum(axis=1) +
+    Netload = (solution.MLoad.sum(axis=1) - solution.GPV.sum(axis=1) - solution.GWind.sum(axis=1) -
                solution.GBaseload.sum(axis=1) - flexible)
 
     Pcapacity = solution.CPHP.sum(axis=0) * 1000 # S-CPHP(j), GW to MW

@@ -12,7 +12,6 @@ Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
 PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)
 Windl = np.array(['NSW']*8 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*2 + ['SA']*8 + ['TAS']*4 + ['VIC']*4 + ['WA']*3 + ['NT']*1)
 
-
 _, Nodel_int = np.unique(Nodel, return_inverse=True)
 _, PVl_int = np.unique(Nodel, return_inverse=True)
 _, Windl_int = np.unique(Nodel, return_inverse=True)
@@ -36,21 +35,19 @@ CPeak = CHydro + CBio - CBaseload # GW
 DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400]) * 0.03 * pow(10, -3)
 CDC6max = 3 * 0.63 # GW
 
-
 efficiency = 0.8
 factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
-
 
 if scenario<=17:
     node = Nodel[scenario % 10]
 
-    MLoad = MLoad[:, np.where(Nodel==node)[0]]
-    TSPV = TSPV[:, np.where(PVl==node)[0]]
-    TSWind = TSWind[:, np.where(Windl==node)[0]]
-    CHydro, CBio, CBaseload, CPeak = [x[np.where(Nodel==node)[0]] for x in (CHydro, CBio, CBaseload, CPeak)]
+    MLoad = MLoad[:, Nodel==node]
+    TSPV = TSPV[:, PVl==node]
+    TSWind = TSWind[:, Windl==node]
+    CHydro, CBio, CBaseload, CPeak = [x[Nodel==node] for x in (CHydro, CBio, CBaseload, CPeak)]
 
-    Nodel_int, PVl_int, Windl_int = [x[np.where(Nodel==node)[0]] for x in (Nodel_int, PVl_int, Windl_int)]
-    Nodel, PVl, Windl = [x[np.where(x==node)[0]] for x in (Nodel, PVl, Windl)]
+    Nodel_int, PVl_int, Windl_int = [x[Nodel==node] for x in (Nodel_int, PVl_int, Windl_int)]
+    Nodel, PVl, Windl = [x[x==node] for x in (Nodel, PVl, Windl)]
 
 elif scenario>=21:
     coverage = [np.array(['NSW', 'QLD', 'SA', 'TAS', 'VIC']),
@@ -62,16 +59,16 @@ elif scenario>=21:
                 np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC']),
                 np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])][scenario % 10 - 1] 
     
-    MLoad = MLoad[:, np.where(np.in1d(Nodel, coverage)==True)[0]]
-    TSPV = TSPV[:, np.where(np.in1d(PVl, coverage)==True)[0]]
-    TSWind = TSWind[:, np.where(np.in1d(Windl, coverage)==True)[0]]
-    CHydro, CBio, CBaseload, CPeak = [x[np.where(np.in1d(Nodel, coverage)==True)[0]] for x in (CHydro, CBio, CBaseload, CPeak)]
+    MLoad = MLoad[:, np.in1d(Nodel, coverage)]
+    TSPV = TSPV[:, np.in1d(PVl, coverage)]
+    TSWind = TSWind[:, np.in1d(Windl, coverage)]
+    CHydro, CBio, CBaseload, CPeak = [x[np.in1d(Nodel, coverage)] for x in (CHydro, CBio, CBaseload, CPeak)]
     
     if 'FNQ' not in coverage:
         MLoad[:, np.where(coverage=='QLD')[0][0]] /= 0.9
     
-    Nodel_int, PVl_int, Windl_int = [x[np.where(np.in1d(Nodel, coverage)==True)[0]] for x in (Nodel_int, PVl_int, Windl_int)]
-    Nodel, PVl, Windl = [x[np.where(np.in1d(x, coverage)==True)[0]] for x in (Nodel, PVl, Windl)]
+    Nodel_int, PVl_int, Windl_int = [x[np.in1d(Nodel, coverage)] for x in (Nodel_int, PVl_int, Windl_int)]
+    Nodel, PVl, Windl = [x[np.in1d(x, coverage)] for x in (Nodel, PVl, Windl)]
 
     
 intervals, nodes = MLoad.shape
@@ -114,10 +111,11 @@ def vF(S):
     CDC = CDC * 0.001 # CDC(k), MW to GW
     PenDC = np.maximum(0, CDC[6,:] - CDC6max) * 0.001 # GW to MW
 
+    _c = 0 if scenario <= 17 else -1
     # numba is fussy about generation of tuples and about stacking arrays of different dimensions
     costitems = np.vstack((S.CPV.sum(axis=0), S.CWind.sum(axis=0), S.CPHP.sum(axis=0), S.CPHS,
                             S.CPV.sum(axis=0), S.CWind.sum(axis=0), Hydro * 0.000001,
-                            np.repeat(-1.0, nvec), np.repeat(-1.0, nvec),))
+                            np.repeat(-1.0, nvec), np.repeat(_c, nvec),))
     costitems = np.vstack((costitems, CDC))
     reindex = np.concatenate((np.arange(4), np.arange(9, 16), np.arange(4, 9)))
 
@@ -250,8 +248,9 @@ def F(S):
     CDC = CDC * 0.001 # CDC(k), MW to GW
     PenDC = max(0, CDC[6] - CDC6max) * 0.001 # GW to MW
 
+    _c = 0 if scenario <= 17 else -1
     cost = (factor * np.array([S.CPV.sum(), S.CWind.sum(), S.CPHP.sum(), S.CPHS] + list(CDC) +
-                             [S.CPV.sum(), S.CWind.sum(), Hydro * 0.000001, -1, -1])
+                             [S.CPV.sum(), S.CWind.sum(), Hydro * 0.000001, _c, _c])
             ).sum()
 
     loss = TDC_abs.sum(axis=0) * DCloss
@@ -300,6 +299,20 @@ solution_spec = [
     ('MStorage', float64[:, :]),
     ('MDeficit', float64[:, :]),
     ('MSpillage', float64[:, :]),
+    ('MHydro', float64[:, :]),
+    ('MBio', float64[:, :]),
+    ('CDP', float64[:]),
+    ('CDS', float64[:]),
+    ('TDC', float64[:, :]),
+    ('CDC', float64[:]),
+    ('FQ', float64[:]),
+    ('NQ', float64[:]),
+    ('NS', float64[:]),
+    ('NV', float64[:]),
+    ('AS', float64[:]),
+    ('SW', float64[:]),
+    ('TV', float64[:]),
+    ('Topology', float64[:, :]),
 ]
 
 @jitclass(solution_spec)

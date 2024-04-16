@@ -18,11 +18,8 @@ from Input import *
 VERBOSE=True
 SLACK = 1.05
 # SLACK = 1e9 #for testing
-MAXITER=10000
+MAXITER=3000
 
-cost = np.genfromtxt('Data/OptimisationResults.csv', dtype=float, skip_header=1, delimiter=',')
-cost = cost[cost[:,0] == args.s, 1][0]
-cost = cost*SLACK
 
 class callback:
     def __init__(self, disp_freq=0):
@@ -55,7 +52,7 @@ class callback:
             return True
         return False
         
-def Optimise(p, m, r):       
+def Optimise(p, m, r, iter=MAXITER):       
     start_time = dt.datetime.now()
     
     result = differential_evolution(
@@ -63,7 +60,7 @@ def Optimise(p, m, r):
         args=func_args,
         bounds=list(zip(lb, ub)), 
         tol=0,
-        maxiter=MAXITER,
+        maxiter=iter,
         popsize=p, 
         mutation=m, 
         recombination=r,
@@ -71,7 +68,7 @@ def Optimise(p, m, r):
         polish=False, 
         updating='deferred', 
         vectorized=bool(args.vec),
-        callback=callback(1),
+        callback=callback(100),
         workers=args.w if args.vec == 0 else 1, #vectorisation overrides mp
         )
     
@@ -95,8 +92,20 @@ if __name__ == '__main__':
     record_times = np.array([]).reshape((0,1))
     record_args = np.array([]).reshape((0,3))
     
-    for p in range(1, 106, 5):
-        print('p', p, dt.datetime.now())
+    p=10
+    npop = p * len(lb)
+    vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
+    vsize = min(vsize, args.vp, npop)
+    range_gen = range(npop//vsize + 1) if npop%vsize != 0 else range(npop//vsize)
+    ind_pairs = [(n*vsize, min((n+1)*vsize, npop)) for n in range_gen]
+    
+    func_args = (False, ind_pairs)
+
+    cost = -np.inf
+    result, best_time = Optimise(p, 0.5, 0.3, 1500)
+    cost = result.fun*SLACK
+
+    for p in range(6, 106, 5):
         if bool(args.vec) is True: 
             npop = p * len(lb)
             vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
@@ -107,7 +116,6 @@ if __name__ == '__main__':
             func_args = (False, ind_pairs)
             
         for m in range(1, 21, 1):
-            print('m', m, dt.datetime.now())
             m /= 10
             for r in range(1, 11, 1):
                 r /= 10

@@ -14,10 +14,13 @@ parser.add_argument('-m', type=float, required=True)
 parser.add_argument('-r', type=float, required=True)
 parser.add_argument('-s', type=int,   required=True)
 parser.add_argument('-cb',type=int,   required=True)
-parser.add_argument('-v', type=int,   required=True)
+parser.add_argument('-ver', type=int,   required=True)
 parser.add_argument('-vp',type=int,   required=True)
 parser.add_argument('-w', type=int,   required=True)
+parser.add_argument('-vec', type=int, required=True)
+
 args = parser.parse_args()
+
 
 from Input import *
 from numpy import atleast_2d, array

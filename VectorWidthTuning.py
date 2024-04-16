@@ -45,7 +45,7 @@ def _memory_test_eval(width, rec=0, rec_lim=3, include_children=False):
             return None, None
     args.vp = width
     r = [x for xs in [('-'+n, str(v)) for n,v in args._get_kwargs()] for x in xs]
-
+    
     try:  
         mem, retcode = memory_usage(proc=Popen([pycmd,'solutionMemoryUse.py']+r),
                            interval=0.0001, max_usage=True,retval=True, include_children=include_children)
@@ -85,16 +85,14 @@ def _memory_test_it(start, end, inc, prev_mem=None, include_children=False):
 def memory_test(workers = 1):
     W, args.w = args.w, workers
     if VERBOSE: 
-        print("Beginning test for vectorisation width on {workers} core(s).\n{'-'*70}")
+        print(f"Beginning test for vectorisation width on {workers} core(s).\n{'-'*70}")
     n=0
     prev_mem = None
-    for p in range(5, -1, -1):
+    for p in range(5, 0, -1):
         n, avetime, prev_mem = _memory_test_it(n+pow(10, p-1), n+pow(10, p), pow(10, p-1), prev_mem)
     
     print(f"Maximum no. solutions to be run together on {workers} core(s): {n}")
     args.w = W
 
-
-
-
-
+if __name__ == '__main__':
+    memory_test(1)

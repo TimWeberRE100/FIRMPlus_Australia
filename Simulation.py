@@ -36,8 +36,8 @@ def Reliability(solution, flexible, start=None, end=None):
 
         Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
         Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-        Storaget = Storaget_1 + (Charget * efficiency - Discharget) * resolution
-
+        Storaget = Storaget_1 - Discharget * resolution + Charget * resolution * efficiency
+        
         Discharge[t] = Discharget
         Charge[t] = Charget
         Storage[t] = Storaget
@@ -82,7 +82,7 @@ def VReliability(solution, flexible):
 
         Discharget = np.minimum(np.minimum(np.maximum(zero, Netloadt), Pcapacity), Storaget_1 / resolution)
         Charget = np.minimum(np.minimum(-1 * np.minimum(zero, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-        Storaget = Storaget_1 + (Charget * efficiency - Discharget) * resolution
+        Storaget = Storaget_1 - Discharget * resolution + Charget * resolution * efficiency
 
         Discharge[t] = Discharget
         Charge[t] = Charget

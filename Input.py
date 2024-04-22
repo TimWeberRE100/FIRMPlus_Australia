@@ -115,7 +115,7 @@ def vF(S):
     # numba is fussy about generation of tuples and about stacking arrays of different dimensions
     costitems = np.vstack((S.CPV.sum(axis=0), S.CWind.sum(axis=0), S.CPHP.sum(axis=0), S.CPHS,
                             S.CPV.sum(axis=0), S.CWind.sum(axis=0), Hydro * 0.000001,
-                            np.repeat(-1.0, nvec), np.repeat(_c, nvec),))
+                            np.repeat(_c, nvec), np.repeat(_c, nvec),))
     costitems = np.vstack((costitems, CDC))
     reindex = np.concatenate((np.arange(4), np.arange(9, 16), np.arange(4, 9)))
 
@@ -286,6 +286,7 @@ solution_spec = [
     ('Storage', float64[:]),
     ('Deficit', float64[:]),
     ('Spillage', float64[:]),
+    ('Netload' ,float64[:]),
     ('Penalties', float64),
     ('Lcoe', float64),
     ('evaluated', boolean),
@@ -369,3 +370,4 @@ class Solution:
     # def __repr__(self):
     #     """S = Solution(list(np.ones(64))) >> print(S)"""
     #     return 'Solution({})'.format(self.x)
+

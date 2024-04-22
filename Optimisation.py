@@ -9,7 +9,6 @@ import numpy as np
 from argparse import ArgumentParser
 from multiprocessing import cpu_count, Pool
 from scipy.optimize import differential_evolution
-from numba import njit, jit
 
 parser = ArgumentParser()
 parser.add_argument('-i', default=1000, type=int, required=False, help='maxiter=4000, 400')
@@ -37,28 +36,32 @@ def Vobjective(x):
     S._evaluate()
     return S.Lcoe + S.Penalties
 
+def Vobj_wrapper(x, callback, ind_pairs):
+    arrs = [x[:, i: j] for i, j in ind_pairs]
+    results = np.concatenate([Vobjective(arr) for arr in arrs])
+
+    if callback is True:
+        # with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
+        #     printout = np.concatenate((results.reshape(-1, 1), x.T), axis = 1)
+        #     writer = csv.writer(csvfile)
+        #     writer.writerows(printout)
+        csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
+        printout = np.concatenate((results.reshape(-1, 1), x.T), axis = 1)
+        csv.writer(csvfile).writerows(printout)
+        csvfile.close()
+    return results
+
 def Objective(x):
     """This is the objective function"""
     S = Solution(x)
     S._evaluate()
     return S.Lcoe + S.Penalties
 
-def Vobj_wrapper(x, callback, ind_pairs):
-    arrs = [x[:, i: j] for i, j in ind_pairs]
-    results = np.concatenate([Vobjective(arr) for arr in arrs])
-    
-    if callback is True:
-        with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
-            printout = np.concatenate((results.reshape(-1, 1), x.T), axis = 1)
-            writer = csv.writer(csvfile)
-            writer.writerows(printout)
-    return results
-
-def Vobj_mpwrapper(x, callback, ind_pairs):
+def Vobj_mpwrapper(x, callback, ind_pairs, processes):
     arrs = [x[:, i: j] for i, j in ind_pairs]
     with Pool(processes=processes) as processPool:
         results = processPool.map(Vobjective, arrs)
-    results = np.concatenate(results)
+        results = np.concatenate(results)
     
     if callback is True:
         with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
@@ -69,12 +72,11 @@ def Vobj_mpwrapper(x, callback, ind_pairs):
 
 def Callback_1(xk, convergence=None):
     with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow([Objective(xk)] + list(xk))
+        csv.writer(csvfile).writerow([Objective(xk)] + list(xk))
         
 def Init_callback():
     with open('Results/History{}.csv'.format(scenario), 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+        csv.writer(csvfile)
 
 def Optimise():
     if args.cb > 1: 
@@ -93,10 +95,13 @@ def Optimise():
         vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
         vsize = min(vsize, args.vp, npop)
         range_gen = range(npop//vsize + 1) if npop%vsize != 0 else range(npop//vsize)
-        ind_pairs = ((n*vsize, min((n+1)*vsize, npop)) for n in range_gen)
+        ind_pairs = [(n*vsize, min((n+1)*vsize, npop)) for n in range_gen]
         
-        func_args = (args.cb==2, ind_pairs)
-    
+        if processes == 1:
+            func_args = (args.cb==2, ind_pairs)
+        elif processes > 1:
+            func_args = (args.cb==2, ind_pairs, processes)
+        
     elif args.vec == 0:
         vsize=1
         func = Objective

@@ -4,9 +4,26 @@
 # Correspondence: bin.lu@anu.edu.au
 
 import numpy as np
-from Optimisation import scenario
 from numba import njit, float64, int64, prange, boolean
 from numba.experimental import jitclass
+
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+parser.add_argument('-i', default=1000, type=int, required=False, help='maxiter=4000, 400')
+parser.add_argument('-p', default=100, type=int, required=False, help='popsize=2, 10')
+parser.add_argument('-m', default=0.5, type=float, required=False, help='mutation=0.5')
+parser.add_argument('-r', default=0.3, type=float, required=False, help='recombination=0.3')
+parser.add_argument('-s', default=21, type=int, required=False, help='11, 12, 13, ...')
+parser.add_argument('-cb', default=0, type=int, required=False, help='Callback: 0-None, 1-generation elites, 2-everything')
+parser.add_argument('-ver', default=1, type=int, required=False, help='Boolean - print progress to console')
+parser.add_argument('-vp', default=50, type=int, required=False, help='Maximum number of vectors to send to objective')
+parser.add_argument('-w', default=1, type=int, required=False, help='Maximum number of cores to parallelise over')
+parser.add_argument('-vec', default=1, type=int, required=False, help='Boolean - vectorised mode')
+
+args = parser.parse_args()
+assert args.w > 0 or args.w in (-1, -2)
+scenario = args.s
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
 PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)

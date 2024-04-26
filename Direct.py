@@ -7,14 +7,12 @@ Created on Wed Apr 17 15:27:19 2024
 
 
 import numpy as np
-
 import datetime as dt
-
-from Input import *
-from Optimisation import args#, Vobj_wrapper
-from DirectAlgorithm import Direct
 from numba import jit, objmode
 from csv import writer
+
+from Input import *
+from DirectAlgorithm import Direct
 
 @jit(nopython=False)
 def Vobj(x, callback=False):
@@ -43,11 +41,15 @@ if __name__ == '__main__':
     starttime = dt.datetime.now()
     print("Optimisation starts at", starttime)
     
-    if args.cb > 0: 
-        Init_callback()
-            
-    min_length = np.array([10e-4]*(pzones+wzones+nodes) + [0.1])
-    # 1 MW, 100 MWh 
+    # if args.cb > 0: 
+    #     Init_callback()
+    
+    ultralow_res = np.array([1.0]*(pzones+wzones+nodes) + [100.0]) # 1 GW, 100 GWh
+    low_res = np.array([0.1]*(pzones+wzones+nodes) + [10.0]) # 100 MW, 10 GWh
+    medium_res = np.array([0.01]*(pzones+wzones+nodes) + [1.0]) # 10 MW, 1 GWh
+    high_res = np.array([0.001]*(pzones+wzones+nodes) + [0.1]) # 1 MW, 100 MWh
+    ultrahigh_res = np.array([0.000_1]*(pzones+wzones+nodes) + [0.01]) # 0.1 MW, 10 MWh
+    
     
     result = Direct(
         func=Vobj, 
@@ -58,10 +60,11 @@ if __name__ == '__main__':
         vectorizable=True,
         maxvectorwidth=args.vp,
         population=args.p,
-        min_length = min_length, # float or array of x.shape
+        min_length = ultrahigh_res, # float or array of x.shape
         rect_dim=4,
         disp = bool(args.ver),
         locally_biased=False,
+        restart='Results/History{}.csv'.format(scenario),
         )
 
     endtime = dt.datetime.now()

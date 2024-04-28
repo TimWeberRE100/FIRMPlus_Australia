@@ -115,23 +115,12 @@ class hyperrectangle():
 
         self.f, self.parent_f = float(f), parent_f
         self.lb, self.ub = lb, ub
-        self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
+        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
         self.n = parent_n + 1
         self.volume = (self.ub-self.lb).prod()
         self.length_inds = np.log10(self.ub-self.lb)
         self.barren = (self.length_inds < log_min_l).prod()
         self.has_children=False
-
-@njit
-def gen_inds(npop, processes, maxvectorwidth):
-    vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
-    vsize = min(vsize, maxvectorwidth, npop)
-    range_gen = range(npop//vsize + 1) if npop%vsize != 0 else range(npop//vsize)
-    indcs = [np.arange(n*vsize, min((n+1)*vsize, npop), dtype=np.int64) for n in range_gen]
-    inds = np.empty((len(indcs), vsize), dtype=np.int64)
-    for i in range(len(indcs)):
-        inds[i] = indcs[i]
-    return inds
 
 @njit(parallel=True)
 def gen_boolmatrix(ndim):
@@ -147,29 +136,6 @@ def _loop(n, i):
     for j in range(0, 2**n, i2*2):
         a[j:j+i2] = True
     return a
-
-@jit(nopython=False)
-def _func_wrapper(x, func, vectorizable, inds, f_args):
-    results = np.empty(len(x.T), dtype=np.float64)
-    if vectorizable: 
-        # raise NotImplementedErrorNotImplementedError(
-# """Requires direct source code changes because of jit static typing. Uncomment
-#  lines 162-165, raise error at 166-168, comment out 154-160, and this raise error""")
-        if len(f_args) == 0:
-            for ind in inds:
-                results[ind] = func(x[:, ind])
-        else:
-            for ind in inds:
-                results[ind] = func(x[:, ind], *f_args)
-    else: 
-        # if len(f_args) == 0:
-        #     results[0] = func(x[:])
-        # else:
-        #     results[0] = func(x[:], *f_args)
-        raise NotImplementedError(
-"""Requires direct source code changes because of jit static typing. Comment out
- lines 155-160, this raise error, uncomment 162-165, and raise error at 152-154""")
-    return results
 
 @njit
 def _bound(lb, ub, indx):
@@ -209,12 +175,15 @@ def _generate_centres(hrect, indcs, dims):
         centres[i, dims] = _centre(l, u, indcs[i])
     return centres
 
-@jit(nopython=False)
-def _divide_hrect(func, hrect, dims, vectorizable, maxvectorwidth, f_args, log_min_l):
+def _mp_funcwrapper(x, func, f_args):
+    return [func(xn, *f_args) for xn in x]
+
+
+# @jit(nopython=False)
+def _divide_hrect(vectorizable, workers, func, hrect, dims, f_args, log_min_l):
     min_length_reached = hrect.length_inds < log_min_l
     # do not split along min_length axes
     dims = np.array([i for i in dims if not min_length_reached[i]])
-    dims = dims
     if len(dims) == 0:
         # do not lose hrect - may be splittable along different axis
         return [hrect] 
@@ -224,13 +193,23 @@ def _divide_hrect(func, hrect, dims, vectorizable, maxvectorwidth, f_args, log_m
 
     centres = _generate_centres(hrect, indcs, dims)
     lbs, ubs = _generate_bounds(hrect, indcs, dims)
-    f_values = _func_wrapper(centres.T, func, vectorizable, gen_inds(n_new, 1, maxvectorwidth), f_args)
-    
     pf, pn = hrect.f, hrect.n
     
-    hrects = [hyperrectangle(
-        centres[k], f_values[k], lbs[k], ubs[k], pf, pn, log_min_l) 
-        for k in range(n_new)]
+    if vectorizable is True: 
+        f_values = func(centres.T, *f_args)
+        hrects = [hyperrectangle(
+            centres[k], f_values[k], lbs[k], ubs[k], pf, pn, log_min_l) 
+            for k in range(n_new)]
+                
+    if workers > 1: 
+        with Pool(processes=max(workers, n_new)) as processPool:
+            args = [(centres[n], _mp_funcwrapper, *f_args) for n in range(n_new)]
+            _result = processPool.starmap(_mp_funcwrapper, args)
+        f_values = np.array(_result)
+        hrects = [hyperrectangle(
+            centres[k], f_values[k], lbs[k], ubs[k], pf, pn, log_min_l) 
+            for k in range(n_new)]
+
     return hrects
 
 def Direct(
@@ -240,8 +219,8 @@ def Direct(
     maxiter = np.inf,
     maxfev = np.inf,
     callback = None,
-    vectorizable = True,
-    maxvectorwidth = np.inf,
+    vectorizable = False,
+    workers = 1, 
     rect_dim = -1,
     population = 1,
     min_length = -np.inf,
@@ -271,21 +250,15 @@ def Direct(
                         to the objective function at once. 
                     - It is highly recommended to use a vectorizable version
                         of FIRM.
-    maxvectorwidth  - maximum number of vectors to be passed to the objective 
-                        function at once. For FIRM this will be determined by your
-                        system limits especially RAM. 
-                    - It is highly recommended to run a vector-width-tuning script
-                        to find your maximum vector size and then choose a max vector
-                        width accordingly. 
-                    - Also note that the optimiser will only pass a maximum of 
-                        2**rect_dim to the objective function.
     rect_dim        - number of directions to split rectangles on at once. This 
                         keeps the number of rectangles in each iteration manageable. 
                         Optimizer will cycle through the directions automatically.
                     - It is recommended to choose a rect_dim such that 2**rect_dim 
-                        is below but as close as possible to maxvectorwidth.
+                        is below but as close as possible to maximum vector width.
     population      - number of local optima to pursue at once. The optimizer will 
                         split the {population} best rectangles, and any adjacent rectangles.
+                    - higher populations will give slower convergence but a more 
+                        global search.
     min_length      - maximum resolution of the solution. Should be number or array 
                         broadcastable to the solution vector. Default: -inf
     disp            - boolean. Prints out at each iteration.
@@ -297,20 +270,20 @@ def Direct(
                         the optimisation from where the previous one ended. 
                     - Give the file name containing the points already evaluated. 
     """
-
         
     try: 
         lb, ub = bounds
         ndim = len(lb)
         total_vol = (ub-lb).prod()
+        log_min_l = np.log10(min_length)
         
         centre = 0.5*(ub - lb) + lb 
         
         rect_dim = len(centre) if rect_dim == -1 else rect_dim
         assert rect_dim <= ndim
+        workers = cpu_count() if workers == -1 else workers
+        assert workers <= cpu_count()
         
-        log_min_l = np.log10(min_length)
-    
         if restart != '': 
             print('Restarting optimisation where',restart,'left off.')
             archive, elite, total_vol = _restart(restart, bounds, log_min_l, disp)
@@ -324,9 +297,12 @@ def Direct(
             else: 
                 archive = np.array(archive)
         else: 
-            elite = hyperrectangle(centre, 
-                                   _func_wrapper(np.atleast_2d(centre).T, func, vectorizable, gen_inds(1,1,1), f_args)[0], 
-                                   lb, ub, np.inf, -1, log_min_l)
+            if vectorizable: 
+                elite = hyperrectangle(centre, func(np.atleast_2d(centre).T, *f_args)[0], 
+                                       lb, ub, np.inf, -1, log_min_l)
+            else: 
+                elite = hyperrectangle(centre, func(centre, *f_args), 
+                                       lb, ub, np.inf, -1, log_min_l)
             parents = np.array([elite])
             archive, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         
@@ -339,8 +315,8 @@ def Direct(
             # split all hrects to be split from previous iteration
             new_hrects = np.array([hrect for parent in parents 
                                    for hrect in _divide_hrect(
-                func, parent, dims, vectorizable, maxvectorwidth, f_args, log_min_l)])
-    
+                vectorizable, workers, func, parent, dims, f_args, log_min_l)])
+            
             fev += len(new_hrects)
     
             # all hrects which do not have any children  

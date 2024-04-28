@@ -20,6 +20,8 @@ parser.add_argument('-ver', default=1, type=int, required=False, help='Boolean -
 parser.add_argument('-vp', default=50, type=int, required=False, help='Maximum number of vectors to send to objective')
 parser.add_argument('-w', default=1, type=int, required=False, help='Maximum number of cores to parallelise over')
 parser.add_argument('-vec', default=1, type=int, required=False, help='Boolean - vectorised mode')
+parser.add_argument('-res', default=1, type=int)
+parser.add_argument('-x', default=1, type = int)
 
 args = parser.parse_args()
 assert args.w > 0 or args.w in (-1, -2)

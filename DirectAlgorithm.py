@@ -11,6 +11,7 @@ from numba.experimental import jitclass
 import datetime as dt
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
+import warnings
 
 
 # =============================================================================
@@ -28,9 +29,14 @@ else:
 clock = ctypes.CDLL(__LIB).clock
 clock.argtypes = []
 # =============================================================================
+
 @njit
-def hrect_is_semibarren(h1, dims, log_min_l):
-    return (h1.length_inds < log_min_l)[dims].prod() == 1
+def hrect_is_semibarren(length_inds, dims, log_min_l):
+    return (length_inds < log_min_l)[dims].prod() == 1
+
+@njit
+def hrect_is_barren(length_inds, log_min_l):
+    return (length_inds < log_min_l).prod() == 1
 
 @njit
 def hrect_is_parent(h1, h2, tol=1e-10):
@@ -44,8 +50,7 @@ def hrect_is_parent(h1, h2, tol=1e-10):
     lb_bounded = (h1.lb - h2.lb <= tol).prod() == 1
     return ub_bounded and lb_bounded
 
-
-@njit
+# @njit
 def hrects_is_same(h1, h2, tol=1e-10):
     ub_same = (h1.ub == h2.ub).prod() == 1 
     lb_same = (h1.lb == h2.lb).prod() == 1 
@@ -55,19 +60,23 @@ def hrects_is_same(h1, h2, tol=1e-10):
 
 @njit
 def hrects_border(h1, h2, tol = 1e-10):
-    assert h1.ndim == h2.ndim
-    ndim = h1.ndim
+
+    lb1, ub1, ndim1 = h1
+    lb2, ub2, ndim2 = h2
+    
+    assert ndim1 == ndim2
+    ndim = ndim1
     # directions where the domains of each h2 touch
-    touch = (((h2.ub - h1.lb) >= -tol) * 
-             ((h1.ub - h2.lb) >= -tol))
+    touch = (((ub2 - lb1) >= -tol) * 
+             ((ub1 - lb2) >= -tol))
 
     # the domains in each direction touch   
     if not (touch.sum() == ndim):
         return False
 
     # in ndim-1 directions the directions' domains overlap (either perfectly, or one inside another)
-    overlap = (signs_of_array(h2.ub - h1.ub, tol) ==
-               signs_of_array(h1.lb - h2.lb, tol))
+    overlap = (signs_of_array(ub2 - ub1, tol) ==
+               signs_of_array(lb1 - lb2, tol))
     if not (overlap.sum() == ndim-1):
         return False
 
@@ -76,8 +85,8 @@ def hrects_border(h1, h2, tol = 1e-10):
         return False
     
     # adjacent (ub=lb or lb=ub) (higher OR lower) in exactly one dimension
-    adjacency = ((np.abs(h2.ub - h1.lb) < tol) +
-                 (np.abs(h2.lb - h1.ub) < tol)) 
+    adjacency = ((np.abs(ub2 - lb1) < tol) +
+                 (np.abs(lb2 - ub1) < tol)) 
     if not (adjacency.sum() == 1):
         return False
 
@@ -100,27 +109,38 @@ spec = [
     ('ub', float64[:]),
     ('rdif', float64),
     ('adif', float64),
-    ('n', int64),
-    ('length_inds', float64[:]),
+    ('generation', int64),
+    ('cuts', int64),
     ('volume', float64),
-    ('barren', boolean),
-    ('has_children', boolean),
+    ('length_inds', float64[:]),
     ]
 
 @jitclass(spec)
-class hyperrectangle():
-    def __init__(self, centre, f, lb, ub, parent_f, parent_n, log_min_l):
+class j_hyperrectangle():
+    def __init__(self, centre, f, lb, ub, parent_f, generation, cuts):
         self.centre = centre
         self.ndim = len(centre)
 
         self.f, self.parent_f = float(f), parent_f
         self.lb, self.ub = lb, ub
         # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
-        self.n = parent_n + 1
+        self.generation = generation
+        self.cuts = cuts
         self.volume = (self.ub-self.lb).prod()
         self.length_inds = np.log10(self.ub-self.lb)
-        self.barren = (self.length_inds < log_min_l).prod()
-        self.has_children=False
+
+class mp_hyperrectangle():
+    def __init__(self, centre, f, lb, ub, parent_f, generation, cuts):
+        self.centre = centre
+        self.ndim = len(centre)
+
+        self.f, self.parent_f = float(f), parent_f
+        self.lb, self.ub = lb, ub
+        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
+        self.generation = generation
+        self.cuts = cuts
+        self.volume = (self.ub-self.lb).prod()
+        self.length_inds = np.log10(self.ub-self.lb)
 
 @njit(parallel=True)
 def gen_boolmatrix(ndim):
@@ -175,15 +195,10 @@ def _generate_centres(hrect, indcs, dims):
         centres[i, dims] = _centre(l, u, indcs[i])
     return centres
 
-def _mp_funcwrapper(x, func, f_args):
-    return [func(xn, *f_args) for xn in x]
-
-
-# @jit(nopython=False)
-def _divide_hrect(vectorizable, workers, func, hrect, dims, f_args, log_min_l):
-    min_length_reached = hrect.length_inds < log_min_l
-    # do not split along min_length axes
-    dims = np.array([i for i in dims if not min_length_reached[i]])
+def _divide_hrect(hyperrectangle, vectorizable, func, hrect, dims, f_args, log_min_l):
+    resolution_reached = hrect.length_inds < log_min_l
+    # do not split along resolution axes
+    dims = np.array([i for i in dims if not resolution_reached[i]])
     if len(dims) == 0:
         # do not lose hrect - may be splittable along different axis
         return [hrect] 
@@ -193,40 +208,38 @@ def _divide_hrect(vectorizable, workers, func, hrect, dims, f_args, log_min_l):
 
     centres = _generate_centres(hrect, indcs, dims)
     lbs, ubs = _generate_bounds(hrect, indcs, dims)
-    pf, pn = hrect.f, hrect.n
+    pf, gen, cuts = hrect.f, hrect.generation + 1, hrect.cuts + len(dims)
     
     if vectorizable is True: 
-        f_values = func(centres.T, *f_args)
-        hrects = [hyperrectangle(
-            centres[k], f_values[k], lbs[k], ubs[k], pf, pn, log_min_l) 
-            for k in range(n_new)]
-                
-    if workers > 1: 
-        with Pool(processes=max(workers, n_new)) as processPool:
-            args = [(centres[n], _mp_funcwrapper, *f_args) for n in range(n_new)]
-            _result = processPool.starmap(_mp_funcwrapper, args)
-        f_values = np.array(_result)
-        hrects = [hyperrectangle(
-            centres[k], f_values[k], lbs[k], ubs[k], pf, pn, log_min_l) 
-            for k in range(n_new)]
+        f_values = func(centres.T, *f_args, gen, cuts)
+
+    else:
+        f_values = np.array([func(cn, *f_args, gen, cuts) for cn in centres])
+        
+    hrects = [hyperrectangle(
+        centres[k], f_values[k], lbs[k], ubs[k], pf, gen, cuts) 
+        for k in range(n_new)]
 
     return hrects
 
 def Direct(
     func, 
     bounds,
-    f_args=(),
-    maxiter = np.inf,
-    maxfev = np.inf,
-    callback = None,
-    vectorizable = False,
-    workers = 1, 
-    rect_dim = -1,
-    population = 1,
-    min_length = -np.inf,
-    disp = False,
-    locally_biased=False,
+    vectorizable=False,
+    workers=1, 
+    callback=None,
     restart='',
+    program=None,
+    disp=False,
+    
+    f_args=(),
+    maxiter=np.inf,
+    maxfev=np.inf,
+    rect_dim=-1,
+    population=1,
+    resolution=-np.inf,
+    locally_biased=False,
+    alt_threshold=np.inf,
 ):
     """
     DIRECT (DIviding RECTangles) optimiser 
@@ -259,7 +272,7 @@ def Direct(
                         split the {population} best rectangles, and any adjacent rectangles.
                     - higher populations will give slower convergence but a more 
                         global search.
-    min_length      - maximum resolution of the solution. Should be number or array 
+    resolution      - maximum resolution of the solution. Should be number or array 
                         broadcastable to the solution vector. Default: -inf
     disp            - boolean. Prints out at each iteration.
     locally_biased  - boolean. True - converges at first local minimum found.
@@ -270,23 +283,22 @@ def Direct(
                         the optimisation from where the previous one ended. 
                     - Give the file name containing the points already evaluated. 
     """
-        
+    
+    if program is not None:
+        warnings.warn('A program was passed. Parameters of the program may override '
+                      +'other arguments passed. ', UserWarning)
+    workers = cpu_count() if workers==-1 else workers
+    assert workers <= cpu_count()
+    hyperrectangle = mp_hyperrectangle if workers > 1 else j_hyperrectangle
     try: 
         lb, ub = bounds
         ndim = len(lb)
-        total_vol = (ub-lb).prod()
-        log_min_l = np.log10(min_length)
         
         centre = 0.5*(ub - lb) + lb 
         
-        rect_dim = len(centre) if rect_dim == -1 else rect_dim
-        assert rect_dim <= ndim
-        workers = cpu_count() if workers == -1 else workers
-        assert workers <= cpu_count()
-        
         if restart != '': 
             print('Restarting optimisation where',restart,'left off.')
-            archive, elite, total_vol = _restart(restart, bounds, log_min_l, disp)
+            archive, elite, total_vol = _restart(restart, bounds, disp)
             parents, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
 
             barren_i = np.array([(j, h.volume) for j, h in enumerate(archive) if h.barren])
@@ -298,105 +310,143 @@ def Direct(
                 archive = np.array(archive)
         else: 
             if vectorizable: 
-                elite = hyperrectangle(centre, func(np.atleast_2d(centre).T, *f_args)[0], 
-                                       lb, ub, np.inf, -1, log_min_l)
+                f = func(np.atleast_2d(centre).T, *f_args, -1, 0)[0]
             else: 
-                elite = hyperrectangle(centre, func(centre, *f_args), 
-                                       lb, ub, np.inf, -1, log_min_l)
+                f = func(centre, *f_args, -1, 0)
+                
+            elite = hyperrectangle(centre, f, lb, ub, np.inf, -1, 0)
             parents = np.array([elite])
             archive, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         
-        dims = np.arange(rect_dim, dtype=np.int64)
-        conv_max = ndim // rect_dim + 1 
+        i, conv_count, miter_adj, mfev_adj, it_best = 0, 0, 0, 0, 0
+        interrupted = False
+        fev = 1
+        
+        program = ({},) if program is None else program
+        for step in program:
+            keys = step.keys()
+            f_args = step['f_args'] if 'f_args' in keys else f_args
+            maxiter = step['maxiter'] if 'maxiter' in keys else maxiter
+            maxfev = step['maxfev'] if 'maxfev' in keys else maxfev
+            rect_dim = step['rect_dim'] if 'rect_dim' in keys else rect_dim
+            population = step['population'] if 'population' in keys else population
+            resolution = step['resolution'] if 'resolution' in keys else resolution
+            locally_biased = step['locally_biased'] if 'locally_biased' in keys else locally_biased
 
-        i, fev, conv_count, interrupted = 0, 1, 0, False
-        while i < maxiter and fev < maxfev and conv_count < conv_max:
-            it_start = clock()
-            # split all hrects to be split from previous iteration
-            new_hrects = np.array([hrect for parent in parents 
-                                   for hrect in _divide_hrect(
-                vectorizable, workers, func, parent, dims, f_args, log_min_l)])
+            rect_dim = len(lb) if rect_dim==-1 else rect_dim
+            assert rect_dim <= ndim
+            dims = np.arange(rect_dim, dtype=np.int64)
+            conv_max = ndim // rect_dim + 1 
+
+            log_min_l = np.log10(resolution)
+            total_vol = (ub-lb).prod()
+            local_minima = np.array([], dtype=hyperrectangle)
             
-            fev += len(new_hrects)
-    
-            # all hrects which do not have any children  
-            childless = np.concatenate((new_hrects, archive))
-    
-            # generate array of list-index, cost, and volume
-            fs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
-            # Make sure we haven't lost search hyperspace
-            assert abs(1-sum(fs[:, 2])/total_vol) < 1e-6 # tolerance for floating point 
+            while (i < maxiter+miter_adj # stop at max iterations
+                   and fev < maxfev  # stop at max function evaluations
+                   and conv_count < conv_max # stop when no improvement to best (locally biased)
+                   and total_vol > 0 # stop when resolution fully resolved
+                   and it_best < elite.f * alt_threshold # stop when no longer finding near-optimal space
+                   ): 
+                
+                it_start = clock()
+                # split all hrects to be split from previous iteration
+                if vectorizable is True:
+                    new_hrects = np.array([hrect for parent in parents 
+                                           for hrect in _divide_hrect(
+                        hyperrectangle, vectorizable, func, parent, dims, f_args, log_min_l)])
+                if workers > 1:
+                    with Pool(min(cpu_count(), len(parents))) as processPool:
+                        argtups = [(hyperrectangle, vectorizable, func, parent, dims, f_args, log_min_l)
+                                   for parent in parents]
+                        new_hrects = list(processPool.starmap(_divide_hrect, argtups))
+                        new_hrects = [hrect for siblings in new_hrects for hrect in siblings]
+                
+                fev += len(new_hrects)
+        
+                # all hrects which do not have any children  
+                childless = np.concatenate((new_hrects, archive))
+        
+                # generate array of list-index, cost, and volume
+                fs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
+                # Make sure we haven't lost search hyperspace
+                assert abs(1-sum(fs[:, 2])/total_vol) < 1e-6, f'j {sum(fs[:, 2])} {total_vol}' # tolerance for floating point 
+                
+                # sort list indices by cost
+                fs = fs[fs[:,1].argsort(), 0].astype(np.int64)
+                it_best = fs[0]
+                # get list-indicies of the best {population} hrects by cost 
+                best = np.array(fs[:min(population, len(fs))], dtype=np.int64)
+                if childless[best[0]].f < elite.f: 
+                    # optimal value may not be found in the youngest generation
+                    elite = childless[best[0]]
             
-            # sort list indices by cost
-            fs = fs[fs[:,1].argsort(), 0].astype(np.int64)
-            # get list-indicies of the best {population} hrects by cost 
-            best = np.array(fs[:min(population, len(fs))], dtype=np.int64)
-    
-            best_ = childless[best]
-            if i>0: 
-                sames = [hrects_is_same(best_[j], prev_bests[j]) for j in range(len(prev_bests))]
-                if sum(sames) == population: 
-                    conv_count += 1
+                if i>0: 
+                    sames = [hrects_is_same(childless[best][j], prev_bests[j]) for j in range(len(prev_bests))]
+                    if sum(sames) == population: 
+                        conv_count += 1
+                    else: 
+                        conv_count = 0 
+                
+                if locally_biased is True:
+                    # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
+                    prev_bests = childless[best]
+                    new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
+                                             if hrects_border((b.ub, b.lb, b.ndim), (hrect.ub, hrect.lb, hrect.ndim)) 
+                                             and not hrect_is_barren(hrect.length_inds, log_min_l)], dtype=np.int64)
+                    # combine new and archived hrects to be split next iteration
+                    new_accepted = np.unique(np.concatenate((best, new_accepted)))
+                    # get list-indices of childless hrects which are not to be split
+                    to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
+                    # rotate splitting axes
+                    dims += rect_dim 
+                    dims %= ndim
                 else: 
-                    conv_count = 0 
-            
-            if childless[best[0]].f < elite.f: 
-                # optimal value may not be found in the youngest generation
-                elite = childless[best[0]]
-            else: 
-                elite.has_children=True
+                    lm_i = np.array([j for j in fs if hrect_is_barren(childless[j].length_inds, log_min_l)], dtype=np.int64)
+                    total_vol -= sum([h.volume for h in childless[lm_i]])
+                    local_minima = np.concatenate((local_minima, np.array(childless[lm_i])))
+                    
+                    # rotate splitting axes
+                    dims += rect_dim 
+                    dims %= ndim
+                    
+                    best_ = []
+                    for f_i in fs:
+                        if not hrect_is_semibarren(childless[f_i].length_inds, dims, log_min_l):
+                            best_.append(f_i)
+                        if len(best_) >= min(population, len(fs)):
+                            break
+                    best = np.array(best_, dtype=np.int64)
+                    new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
+                                             if hrects_border((b.ub, b.lb, b.ndim), (hrect.ub, hrect.lb, hrect.ndim))  
+                                             and not hrect_is_semibarren(hrect.length_inds, dims, log_min_l)], dtype=np.int64)
+                    # combine new and archived hrects to be split next iteration
+                    new_accepted = np.unique(np.concatenate((best, new_accepted)))
+                    # remove local minima
+                    new_accepted = np.setdiff1d(new_accepted, lm_i, assume_unique=True)
 
-            if locally_biased is True:
-                # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
-                prev_bests = childless[best]
-                new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
-                                         if hrects_border(b, hrect) and not hrect.barren], dtype=np.int64)
-            else: 
-                local_minima = np.array([j for j in best if childless[j].barren is True], dtype=np.int64)
+                    # get list-indices of childless hrects which are not to be split
+                    to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
+                    
+                    # remove local minima
+                    to_arch = np.setdiff1d(to_arch, lm_i, assume_unique=True)
                 
+                # update archive
+                archive = childless[to_arch]
+                # old parents are forgotten
+                parents = childless[new_accepted]
                 
-                new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
-                                         if hrects_border(b, hrect) and not hrect.barren], dtype=np.int64)
-                # rotate splitting axes
-                dims += rect_dim 
-                dims %= ndim
-                
-                best_ = []
-                for f_i in fs:
-                    if not hrect_is_semibarren(childless[f_i], dims, log_min_l):
-                        best_.append(f_i)
-                    if len(best_) >= min(population, len(fs)):
-                        break
-                best = np.array(best_, dtype=np.int64)
-                new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
-                                         if hrects_border(b, hrect) 
-                                         and not hrect_is_semibarren(hrect, dims, log_min_l)], dtype=np.int64)
-
-                # forget local minima - (will be remebered by elite if elite)
-                new_accepted = np.setdiff1d(new_accepted, local_minima, assume_unique=True)
-                total_vol -= sum([h.volume for h in childless[local_minima]])
-                
-            # combine new and archived hrects to be split next iteration
-            new_accepted = np.unique(np.concatenate((best, new_accepted)))
-    
-            # get list-indices of childless hrects which are not to be split
-            to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
-    
-            # update archive
-            archive = childless[to_arch]
-                
-                
-            # old parents are forgotten
-            parents = childless[new_accepted]
-            
-            it_time = (clock() - it_start)/1000 #cpu-seconds
-            if disp is True:
-                print(f'it {i}: #hrects = {len(parents)}. Took: {int(it_time//60)}:{round(it_time%60, 4)}.',
-                      f'Best value: {elite.f}.')
-            if callback is not None:
-                callback(elite)
-    
-            i+=1
+                it_time = (clock() - it_start)/1000 #cpu-seconds
+                if disp is True:
+                    print(f'it {i}: #hrects = {len(parents)}. Took: {int(it_time//60)}:{round(it_time%60, 4)}.',
+                          f'Best value: {elite.f}.')
+                if callback is not None:
+                    callback(elite)
+                i+=1
+            archive = np.concatenate((archive, local_minima))
+            miter_adj += maxiter
+            mfev_adj += maxfev
+            print('switch gear')
     except KeyboardInterrupt:
         interrupted = True
         pass
@@ -404,7 +454,8 @@ def Direct(
     return DirectResult(elite.centre, elite.f, fev, i, interrupted, 
                           elite.lb, elite.ub, elite.volume, elite.volume/total_vol)
 
-def _restart(restart, bounds, log_min_l, disp):
+def _restart(restart, bounds, disp):
+    raise NotImplementedError("Fix regarding generation and cuts parameters")
     history = np.genfromtxt(restart, delimiter=',', dtype=np.float64)
     fs, xs = history[:,0], history[:,1:]
     
@@ -425,14 +476,13 @@ def _restart(restart, bounds, log_min_l, disp):
     xs, lbs, ubs = (arr*(ub-lb)+lb for arr in (xs, lbs, ubs))
 
     elite = fs.argmin()
-    elite = hyperrectangle(xs[elite], fs[elite], lbs[elite], ubs[elite], np.nan, np.nan, log_min_l)
-    
+    elite = j_hyperrectangle(xs[elite], fs[elite], lbs[elite], ubs[elite], np.nan, np.nan, )
 # =============================================================================
 # Child-wise loop is faster 
 # Iterates backwards through list of rectangles
 # For each rectangle, directly removes any parents it finds (searching backwards)
-    _child_loop(xs[:1,:], fs[:1], lbs[:1, :], ubs[:1, :], log_min_l) # compile jit
-    archive = _child_loop(xs, fs, lbs, ubs, log_min_l)
+    _child_loop(xs[:1,:], fs[:1], lbs[:1, :], ubs[:1, :]) # compile jit
+    archive = _child_loop(xs, fs, lbs, ubs)
 # =============================================================================
 
 # =============================================================================
@@ -461,9 +511,9 @@ def _restart(restart, bounds, log_min_l, disp):
     return archive, elite, total_vol
 
 @njit
-def _child_loop(xs, fs, lbs, ubs, log_min_l):
+def _child_loop(xs, fs, lbs, ubs):
     start = clock()
-    archive = [hyperrectangle(xs[i], fs[i], lbs[i], ubs[i], np.nan, np.nan, log_min_l) for i in range(len(fs))]
+    archive = [j_hyperrectangle(xs[i], fs[i], lbs[i], ubs[i], np.nan, np.nan) for i in range(len(fs))]
     for i in range(len(archive)-1, -1, -1):
         if (len(fs)-i)%1000 == 0 and i != 0: 
             itt = (clock()-start)/1000
@@ -481,9 +531,9 @@ def _child_loop(xs, fs, lbs, ubs, log_min_l):
     return archive
          
 @njit
-def _parent_loop(xs, fs, lbs, ubs, log_min_l):
+def _parent_loop(xs, fs, lbs, ubs):
     start = clock()
-    archive = [hyperrectangle(xs[i], fs[i], lbs[i], ubs[i], np.nan, np.nan, log_min_l) for i in range(len(fs))]
+    archive = [j_hyperrectangle(xs[i], fs[i], lbs[i], ubs[i], np.nan, np.nan) for i in range(len(fs))]
     parents_i, _vol = [], 0
     for i in prange(len(archive)):
         if i%10000 == 0 and i != 0: 

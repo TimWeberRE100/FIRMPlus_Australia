@@ -23,11 +23,18 @@ if platform.system() == "Windows":
     __LIB = find_msvcrt()
     if __LIB is None:
         __LIB = "msvcrt.dll"
+    clock = ctypes.CDLL(__LIB).clock
+    clock.argtypes = []
+    def cclock():
+        return clock()/1000 #cpu-seconds
+
 else:
     from ctypes.util import find_library
     __LIB = find_library("c")
-clock = ctypes.CDLL(__LIB).clock
-clock.argtypes = []
+    clock = ctypes.CDLL(__LIB).clock
+    clock.argtypes = []
+    def cclock():
+        return clock()/1000/1000 #cpu-seconds
 # =============================================================================
 
 spec = [
@@ -515,11 +522,11 @@ def _restart(restart, bounds, disp):
 
 @njit
 def _child_loop(xs, fs, lbs, ubs):
-    start = clock()
+    start = cclock()
     archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     for i in range(len(archive)-1, -1, -1):
         if (len(fs)-i)%1000 == 0 and i != 0: 
-            itt = (clock()-start)/1000
+            itt = (cclock()-start)/1000
             h, m, s = int(itt//3600), int(round((itt%3600)//60)), int(round(itt%60))
             itt = itt * i / (len(archive)-i+1)
             rh, rm, rs = int(itt//3600), int(round((itt%3600)//60)), int(round(itt%60))
@@ -535,12 +542,12 @@ def _child_loop(xs, fs, lbs, ubs):
          
 @njit
 def _parent_loop(xs, fs, lbs, ubs):
-    start = clock()
+    start = cclock()
     archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     parents_i, _vol = [], 0
     for i in prange(len(archive)):
         if i%10000 == 0 and i != 0: 
-            itt = (clock()-start)/1000
+            itt = (cclock()-start)/1000
             h, m, s = int(itt//3600), int(round(itt%3600)), int(round(itt%60))
             itt = itt * (len(fs)-i) / i
             rh, rm, rs = int(itt//3600), int(round(itt%3600)), int(round(itt%60))

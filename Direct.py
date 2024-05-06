@@ -97,7 +97,7 @@ if __name__ == '__main__':
         workers=args.w,
         population=args.p,
         # resolution = res[args.res], # float or array of x.shape
-        rect_dim=-1,
+        rect_dim=7,
         disp = bool(args.ver),
         locally_biased=False,
         restart='Results/History{}.csv'.format(scenario) if args.x == 1 else '',

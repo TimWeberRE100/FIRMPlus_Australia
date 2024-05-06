@@ -30,6 +30,48 @@ clock = ctypes.CDLL(__LIB).clock
 clock.argtypes = []
 # =============================================================================
 
+spec = [
+    ('centre', float64[:]),
+    ('ndim', int64),
+    ('f', float64),
+    ('parent_f', float64),
+    ('lb', float64[:]),
+    ('ub', float64[:]),
+    ('rdif', float64),
+    ('adif', float64),
+    ('generation', int64),
+    ('cuts', int64),
+    ('volume', float64),
+    ('length_inds', float64[:]),
+    ]
+
+@jitclass(spec)
+class j_hyperrectangle():
+    def __init__(self, centre, f, generation, cuts, lb, ub, parent_f):
+        self.centre = centre
+        self.ndim = len(centre)
+
+        self.f, self.parent_f = float(f), parent_f
+        self.lb, self.ub = lb, ub
+        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
+        self.generation = generation
+        self.cuts = cuts
+        self.volume = (self.ub-self.lb).prod()
+        self.length_inds = np.log10(self.ub-self.lb)
+
+class mp_hyperrectangle():
+    def __init__(self, centre, f, generation, cuts, lb, ub, parent_f):
+        self.centre = centre
+        self.ndim = len(centre)
+
+        self.f, self.parent_f = float(f), parent_f
+        self.lb, self.ub = lb, ub
+        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
+        self.generation = generation
+        self.cuts = cuts
+        self.volume = (self.ub-self.lb).prod()
+        self.length_inds = np.log10(self.ub-self.lb)
+
 @njit
 def hrect_is_semibarren(length_inds, dims, log_min_l):
     return (length_inds < log_min_l)[dims].prod() == 1
@@ -100,47 +142,6 @@ def signs_of_array(arr, tol=1e-10):
     arr[np.abs(arr)<tol] = 0 
     return np.sign(arr)
 
-spec = [
-    ('centre', float64[:]),
-    ('ndim', int64),
-    ('f', float64),
-    ('parent_f', float64),
-    ('lb', float64[:]),
-    ('ub', float64[:]),
-    ('rdif', float64),
-    ('adif', float64),
-    ('generation', int64),
-    ('cuts', int64),
-    ('volume', float64),
-    ('length_inds', float64[:]),
-    ]
-
-@jitclass(spec)
-class j_hyperrectangle():
-    def __init__(self, centre, f, lb, ub, parent_f, generation, cuts):
-        self.centre = centre
-        self.ndim = len(centre)
-
-        self.f, self.parent_f = float(f), parent_f
-        self.lb, self.ub = lb, ub
-        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
-        self.generation = generation
-        self.cuts = cuts
-        self.volume = (self.ub-self.lb).prod()
-        self.length_inds = np.log10(self.ub-self.lb)
-
-class mp_hyperrectangle():
-    def __init__(self, centre, f, lb, ub, parent_f, generation, cuts):
-        self.centre = centre
-        self.ndim = len(centre)
-
-        self.f, self.parent_f = float(f), parent_f
-        self.lb, self.ub = lb, ub
-        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
-        self.generation = generation
-        self.cuts = cuts
-        self.volume = (self.ub-self.lb).prod()
-        self.length_inds = np.log10(self.ub-self.lb)
 
 @njit(parallel=True)
 def gen_boolmatrix(ndim):
@@ -341,15 +342,16 @@ def Direct(
             log_min_l = np.log10(resolution)
             total_vol = (ub-lb).prod()
             local_minima = np.array([], dtype=hyperrectangle)
+            it_best, conv_count=0,0
             
             while (i < maxiter+miter_adj # stop at max iterations
                    and fev < maxfev  # stop at max function evaluations
                    and conv_count < conv_max # stop when no improvement to best (locally biased)
                    and total_vol > 0 # stop when resolution fully resolved
-                   and it_best < elite.f * alt_threshold # stop when no longer finding near-optimal space
+                #    and it_best < elite.f * alt_threshold # stop when no longer finding near-optimal space
                    ): 
                 
-                it_start = clock()
+                it_start = dt.datetime.now()
                 # split all hrects to be split from previous iteration
                 if vectorizable is True:
                     new_hrects = np.array([hrect for parent in parents 
@@ -383,11 +385,13 @@ def Direct(
             
                 if i>0: 
                     sames = [hrects_is_same(childless[best][j], prev_bests[j]) for j in range(len(prev_bests))]
-                    if sum(sames) == population: 
+                    if (sum(sames) == population) or (it_best > elite.f * alt_threshold): 
                         conv_count += 1
                     else: 
                         conv_count = 0 
                 
+                
+
                 if locally_biased is True:
                     # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
                     prev_bests = childless[best]
@@ -436,7 +440,7 @@ def Direct(
                 # old parents are forgotten
                 parents = childless[new_accepted]
                 
-                it_time = (clock() - it_start)/1000 #cpu-seconds
+                it_time = dt.datetime.now() - it_start
                 if disp is True:
                     print(f'it {i}: #hrects = {len(parents)}. Took: {int(it_time//60)}:{round(it_time%60, 4)}.',
                           f'Best value: {elite.f}.')
@@ -455,9 +459,8 @@ def Direct(
                           elite.lb, elite.ub, elite.volume, elite.volume/total_vol)
 
 def _restart(restart, bounds, disp):
-    raise NotImplementedError("Fix regarding generation and cuts parameters")
     history = np.genfromtxt(restart, delimiter=',', dtype=np.float64)
-    fs, xs = history[:,0], history[:,1:]
+    fs, xs = history[:,:3], history[:,3:]
     
     lb, ub = bounds
     total_vol = (ub-lb).prod()
@@ -475,13 +478,13 @@ def _restart(restart, bounds, disp):
     lbs, ubs = (incs - incs1)/maxres, (incs + incs1)/maxres    
     xs, lbs, ubs = (arr*(ub-lb)+lb for arr in (xs, lbs, ubs))
 
-    elite = fs.argmin()
-    elite = j_hyperrectangle(xs[elite], fs[elite], lbs[elite], ubs[elite], np.nan, np.nan, )
+    elite = fs[:,0].argmin()
+    elite = j_hyperrectangle(xs[elite], *fs[elite], lbs[elite], ubs[elite], np.nan)
 # =============================================================================
 # Child-wise loop is faster 
 # Iterates backwards through list of rectangles
 # For each rectangle, directly removes any parents it finds (searching backwards)
-    _child_loop(xs[:1,:], fs[:1], lbs[:1, :], ubs[:1, :]) # compile jit
+    _child_loop(xs[:1,:], fs[:1,:], lbs[:1, :], ubs[:1, :]) # compile jit
     archive = _child_loop(xs, fs, lbs, ubs)
 # =============================================================================
 
@@ -513,7 +516,7 @@ def _restart(restart, bounds, disp):
 @njit
 def _child_loop(xs, fs, lbs, ubs):
     start = clock()
-    archive = [j_hyperrectangle(xs[i], fs[i], lbs[i], ubs[i], np.nan, np.nan) for i in range(len(fs))]
+    archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     for i in range(len(archive)-1, -1, -1):
         if (len(fs)-i)%1000 == 0 and i != 0: 
             itt = (clock()-start)/1000
@@ -533,7 +536,7 @@ def _child_loop(xs, fs, lbs, ubs):
 @njit
 def _parent_loop(xs, fs, lbs, ubs):
     start = clock()
-    archive = [j_hyperrectangle(xs[i], fs[i], lbs[i], ubs[i], np.nan, np.nan) for i in range(len(fs))]
+    archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     parents_i, _vol = [], 0
     for i in prange(len(archive)):
         if i%10000 == 0 and i != 0: 

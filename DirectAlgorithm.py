@@ -526,7 +526,7 @@ def _child_loop(xs, fs, lbs, ubs):
     archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     for i in range(len(archive)-1, -1, -1):
         if (len(fs)-i)%1000 == 0 and i != 0: 
-            itt = (cclock()-start)/1000
+            itt = (cclock()-start)
             h, m, s = int(itt//3600), int(round((itt%3600)//60)), int(round(itt%60))
             itt = itt * i / (len(archive)-i+1)
             rh, rm, rs = int(itt//3600), int(round((itt%3600)//60)), int(round(itt%60))
@@ -547,7 +547,7 @@ def _parent_loop(xs, fs, lbs, ubs):
     parents_i, _vol = [], 0
     for i in prange(len(archive)):
         if i%10000 == 0 and i != 0: 
-            itt = (cclock()-start)/1000
+            itt = (cclock()-start)
             h, m, s = int(itt//3600), int(round(itt%3600)), int(round(itt%60))
             itt = itt * (len(fs)-i) / i
             rh, rm, rs = int(itt//3600), int(round(itt%3600)), int(round(itt%60))

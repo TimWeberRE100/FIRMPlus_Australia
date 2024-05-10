@@ -17,7 +17,7 @@ parser.add_argument('-r', default=0.3, type=float, required=False, help='recombi
 parser.add_argument('-s', default=21, type=int, required=False, help='11, 12, 13, ...')
 parser.add_argument('-cb', default=0, type=int, required=False, help='Callback: 0-None, 1-generation elites, 2-everything')
 parser.add_argument('-ver', default=1, type=int, required=False, help='Boolean - print progress to console')
-parser.add_argument('-w', default=1, type=int, required=False, help='Maximum number of cores to parallelise over')
+parser.add_argument('-w', default=-1, type=int, required=False, help='Maximum number of cores to parallelise over')
 
 args = parser.parse_args()
 assert args.w > 0 or args.w in (-1, -2)
@@ -273,6 +273,6 @@ class Solution:
 
 if __name__=='__main__':
     x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
-    solution = Solution(x) 
+    solution = Solution(x/1.25) 
     solution._evaluate()
     print(solution.Lcoe, solution.Penalties)

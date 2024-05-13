@@ -120,7 +120,7 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 
 lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * len(network))
-ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [500.] * nodes + CDCmax[network_mask])
+ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [500.] * nodes + list(np.array(CDCmax)[network_mask]))
 
 #%%
 from Simulation import Reliability

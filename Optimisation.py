@@ -61,12 +61,6 @@ def Optimise():
 
 if __name__=='__main__':
 
-
-    
-    #TODO 
-    # make vsize smaller if no. slices is only a few larger than no. processes
-    # this will reduce load on each process and avoid waiting for just one extra process 
-
     result, time = Optimise()
     
     with open('Results/Optimisation_resultx{}.csv'.format(scenario), 'a', newline='') as csvfile:

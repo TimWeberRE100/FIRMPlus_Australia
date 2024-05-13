@@ -45,7 +45,8 @@ CPeak = CHydro + CBio - CBaseload # GW
 
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
 DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400]) * 0.03 * pow(10, -3)
-CDC6max = 3 * 0.63 # GW
+CDCmax = [100.]*7
+CDCmax[6] = 3 * 0.63 # GW
 
 efficiency = 0.8
 factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
@@ -118,8 +119,8 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 
-lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.]*nodes + [0.]*len(network))
-ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.]*nodes + [50.]*len(network))
+lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * len(network))
+ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [500.] * nodes + CDCmax[network_mask])
 
 #%%
 from Simulation import Reliability

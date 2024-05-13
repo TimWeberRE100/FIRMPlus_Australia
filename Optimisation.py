@@ -11,10 +11,13 @@ from scipy.optimize import differential_evolution
 
 from Input import *
 
-def Objective(x):
+def Objective(x, callback=False):
     """This is the objective function"""
     S = Solution(x)
     S._evaluate()
+    if callback is True: 
+        with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
+            csv.writer(csvfile).writerow([S.Lcoe+S.Penalties] + list(x))
     return S.Lcoe + S.Penalties
 
 def Callback_1(xk, convergence=None):
@@ -26,11 +29,17 @@ def Init_callback():
         csv.writer(csvfile)
 
 def Optimise():
+    
+    Objective(np.random.rand(len(ub))*(ub-lb)+lb) #compile jit
+
+    if args.cb > 1: 
+        Init_callback()
+
     starttime = dt.datetime.now()
     print("Optimisation starts at", starttime)
     result = differential_evolution(
         func=Objective, 
-        args=(),
+        args=(args.cb==2,),
         bounds=list(zip(lb, ub)), 
         tol=0,
         maxiter=args.i, 
@@ -51,7 +60,13 @@ def Optimise():
     return result, timetaken
 
 if __name__=='__main__':
-   
+
+
+    
+    #TODO 
+    # make vsize smaller if no. slices is only a few larger than no. processes
+    # this will reduce load on each process and avoid waiting for just one extra process 
+
     result, time = Optimise()
     
     with open('Results/Optimisation_resultx{}.csv'.format(scenario), 'a', newline='') as csvfile:

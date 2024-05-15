@@ -27,7 +27,7 @@ def gen_inds(npop, vsize=args.vp):
     return inds
 
 
-# @jit(nopython=False)
+@jit(nopython=False)
 def Obj(x, callback=False):
     
     S = Solution(x)
@@ -36,9 +36,10 @@ def Obj(x, callback=False):
     
     if callback is True:
         printout = np.array([result] + list(x))
-        csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
-        writer(csvfile).writerow(printout)
-        csvfile.close()
+        with objmode():
+            csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
+            writer(csvfile).writerow(printout)
+            csvfile.close()
     return result
     
     

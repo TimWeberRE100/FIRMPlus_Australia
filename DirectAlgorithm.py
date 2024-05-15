@@ -55,20 +55,7 @@ spec = [
     ]
 
 @jitclass(spec)
-class j_hyperrectangle():
-    def __init__(self, centre, f, generation, cuts, lb, ub, parent_f):
-        self.centre = centre
-        self.ndim = len(centre)
-
-        self.f, self.parent_f = float(f), parent_f
-        self.lb, self.ub = lb, ub
-        # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
-        self.generation = generation
-        self.cuts = cuts
-        self.volume = (self.ub-self.lb).prod()
-        self.length_inds = np.log10(self.ub-self.lb)
-
-class mp_hyperrectangle():
+class hyperrectangle():
     def __init__(self, centre, f, generation, cuts, lb, ub, parent_f):
         self.centre = centre
         self.ndim = len(centre)
@@ -224,7 +211,7 @@ def _divide_hrect(hyperrectangle, vectorizable, func, hrect, dims, f_args, log_m
         f_values = func(centres.T, *f_args, gen, cuts)
 
     else:
-        f_values = np.array([func(cn, *f_args, gen, cuts) for cn in centres])
+        f_values=_mp_evaluateobjective(func, centres, f_args)
         
     hrects = [hyperrectangle(
         centres[k], f_values[k], gen, cuts, lbs[k], ubs[k], pf) 
@@ -232,11 +219,18 @@ def _divide_hrect(hyperrectangle, vectorizable, func, hrect, dims, f_args, log_m
 
     return hrects
 
+@njit(parallel=True)
+def _mp_evaluateobjective(func, centres, f_args):
+    fs = np.empty(len(centres), dtype=np.float64)
+    for i in prange(len(centres)):
+        fs[i] = func(centres[i,:], *f_args)
+    return fs
+
+
 def Direct(
     func, 
     bounds,
     vectorizable=False,
-    workers=1, 
     callback=None,
     restart='',
     program=None,
@@ -298,9 +292,6 @@ def Direct(
         warnings.warn(
             'A program was passed. Parameters of the program may override '
             +'other arguments passed. ', UserWarning)
-    workers = cpu_count() if workers==-1 else workers
-    assert workers <= cpu_count()
-    hyperrectangle = mp_hyperrectangle if workers > 1 else j_hyperrectangle
     try: 
         lb, ub = bounds
         ndim = len(lb)
@@ -315,7 +306,7 @@ def Direct(
             if vectorizable: 
                 f = func(np.atleast_2d(centre).T, *f_args, -1, 0)[0]
             else: 
-                f = func(centre, *f_args, -1, 0)
+                f = func(centre, *f_args)
                 
             elite = hyperrectangle(centre, f, -1, 0, lb, ub, np.inf)
             parents = np.array([elite])
@@ -358,20 +349,10 @@ def Direct(
                 it_start = dt.datetime.now()
                 # split all hrects to be split from previous iteration
 
-                if vectorizable is True:
-                    new_hrects = np.array([hrect for parent in 
-                                           tqdm(parents, desc=f'it {i}: #hrects = {len(parents)}. Evaluating Rectangles: ', leave=False)
-                                           for hrect in _divide_hrect(
-                        hyperrectangle, vectorizable, func, parent, dims, f_args, log_min_l)])
-
-                if workers > 1:
-                    if disp is True:
-                        print(f'it {i}: #hrects = {len(parents)}. ', end='')
-                    with Pool(min(cpu_count(), len(parents))) as processPool:
-                        argtups = [(hyperrectangle, vectorizable, func, parent, dims, f_args, log_min_l)
-                                   for parent in parents]
-                        new_hrects = list(processPool.starmap(_divide_hrect, argtups))
-                        new_hrects = [hrect for siblings in new_hrects for hrect in siblings]
+                new_hrects = np.array([hrect for parent in 
+                                       tqdm(parents, desc=f'it {i}: #hrects = {len(parents)}. Evaluating Rectangles: ', leave=False)
+                                       for hrect in _divide_hrect(
+                    hyperrectangle, vectorizable, func, parent, dims, f_args, log_min_l)])
                 
                 fev += len(new_hrects)
         
@@ -469,8 +450,6 @@ def Direct(
 
                 it_time = dt.datetime.now() - it_start
                 if disp is True: 
-                    if workers == 1:
-                        print(f'it {i}: #hrects = {len(parents)}. ', end='')
                     print(f'Took: {it_time}. Best value: {elite.f}.')
                 if callback is not None:
                     callback(elite)
@@ -545,12 +524,8 @@ def _restart(restart, bounds, disp):
     xs, lbs, ubs = (arr*(ub-lb)+lb for arr in (xs, lbs, ubs))
 
     elite = fs[:,0].argmin()
-    elite = j_hyperrectangle(xs[elite], *fs[elite], lbs[elite], ubs[elite], np.nan)
+    elite = hyperrectangle(xs[elite], *fs[elite], lbs[elite], ubs[elite], np.nan)
     
-# =============================================================================
-# Quite slow, but an option without jit
-    # archive = _parentmp(xs, fs, lbs, ubs)
-# =============================================================================
     
     print('Restarting optimisation where',restart,'left off.')
 # =============================================================================
@@ -586,28 +561,11 @@ def _restart(restart, bounds, disp):
   
     return archive, elite, total_vol
 
-def _parentmp_sub(tup):
-    i, archive = tup
-    for j in range(i+1, len(archive)):
-        if hrect_is_parent(archive[i].lb, archive[i].ub, archive[j].lb, archive[j].ub):
-            return j
-            
-def _parentmp(xs, fs, lbs, ubs):
-
-    archive = [mp_hyperrectangle(xs[i], *fs[i,:], lbs[i], ubs[i], np.nan) for i in range(len(xs))]
-    
-    with Pool(processes=min(len(archive), cpu_count())) as processPool:
-        tups = [(i, archive) for i in range(len(archive))]
-        r = tqdm(processPool.imap(_parentmp_sub, tups, 100), total = len(archive))
-        r = [s for s in r if s is not None] 
-    
-    archive = [h for i, h in enumerate(archive) if i not in r]
-    return archive
 
 @njit(parallel=True)
 def _child_loop(xs, fs, lbs, ubs):
     start = cclock()
-    archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(xs))]
+    archive = [hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(xs))]
     expected_evals = (len(xs)-1)*(len(xs))/2 #no parents found ever 
     
     for i in range(len(xs)-1, -1, -1):
@@ -636,7 +594,7 @@ def _child_loop(xs, fs, lbs, ubs):
 @njit
 def _parent_loop(xs, fs, lbs, ubs):
     start = cclock()
-    archive = [j_hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
+    archive = [hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     parents_i = []
     for i in range(len(archive)):
         if i%10000 == 0 and i != 0: 

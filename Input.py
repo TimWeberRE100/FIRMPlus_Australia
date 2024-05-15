@@ -20,8 +20,7 @@ parser.add_argument('-ver', default=1, type=int, required=False, help='Boolean -
 parser.add_argument('-vp', default=50, type=int, required=False, help='Maximum number of vectors to send to objective')
 parser.add_argument('-w', default=1, type=int, required=False, help='Maximum number of cores to parallelise over')
 parser.add_argument('-vec', default=1, type=int, required=False, help='Boolean - vectorised mode')
-parser.add_argument('-res', default=1, type=int)
-parser.add_argument('-x', default=1, type = int)
+parser.add_argument('-x', default=1, type=int)
 
 args = parser.parse_args()
 assert args.w > 0 or args.w in (-1, -2)
@@ -31,9 +30,8 @@ Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
 PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)
 Windl = np.array(['NSW']*8 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*2 + ['SA']*8 + ['TAS']*4 + ['VIC']*4 + ['WA']*3 + ['NT']*1)
 
-_, Nodel_int = np.unique(Nodel, return_inverse=True)
-_, PVl_int = np.unique(Nodel, return_inverse=True)
-_, Windl_int = np.unique(Nodel, return_inverse=True)
+n_node = dict((name, i) for i, name in enumerate(Nodel))
+Nodel_int, PVl_int, Windl_int = (np.array([n_node[node] for node in x], dtype=np.int64) for x in (Nodel, PVl, Windl))
 
 Nodel_int, PVl_int, Windl_int = (x.astype(np.int64) for x in (Nodel_int, PVl_int, Windl_int))
 
@@ -65,7 +63,7 @@ if scenario<=17:
     TSWind = TSWind[:, Windl==node]
     CHydro, CBio, CBaseload, CPeak = [x[Nodel==node] for x in (CHydro, CBio, CBaseload, CPeak)]
 
-    Nodel_int, PVl_int, Windl_int = [x[Nodel==node] for x in (Nodel_int, PVl_int, Windl_int)]
+    Nodel_int, PVl_int, Windl_int = [x[x==n_node[node]] for x in (Nodel_int, PVl_int, Windl_int)]
     Nodel, PVl, Windl = [x[x==node] for x in (Nodel, PVl, Windl)]
 
 elif scenario>=21:
@@ -85,9 +83,10 @@ elif scenario>=21:
     
     if 'FNQ' not in coverage:
         MLoad[:, np.where(coverage=='QLD')[0][0]] /= 0.9
-    
-    Nodel_int, PVl_int, Windl_int = [x[np.in1d(Nodel, coverage)] for x in (Nodel_int, PVl_int, Windl_int)]
-    Nodel, PVl, Windl = [x[np.in1d(x, coverage)] for x in (Nodel, PVl, Windl)]
+        
+    coverage_int = np.array([n_node[node] for node in coverage])
+    Nodel_int, PVl_int, Windl_int = [x[np.isin(x, coverage_int)] for x in (Nodel_int, PVl_int, Windl_int)]
+    Nodel, PVl, Windl = [x[np.isin(x, coverage)] for x in (Nodel, PVl, Windl)]
 
     
 intervals, nodes = MLoad.shape

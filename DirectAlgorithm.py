@@ -367,14 +367,11 @@ def Direct(
                 if childless[fs[0]].f < elite.f: 
                     # optimal value may not be found in the youngest generation
                     elite = childless[fs[0]]
-                
-                if near_optimal == -1:
-                    # get list-indicies of the best {population} hrects by cost 
-                    best = np.array(fs[:min(population, len(fvs))], dtype=np.int64)
-                else:
-                    # every near-optimal rectangle
-                    nearoptimalmask = fvs[:, 1] <= near_optimal*elite.f
-                    best = fs[nearoptimalmask] 
+
+                # near-optimal rectangles
+                nearoptimalmask = fvs[:, 1] <= near_optimal*elite.f
+                best = fs[nearoptimalmask] 
+                best = best[:min(population, len(best))]
                 
                 if locally_biased is True:
                     # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
@@ -452,7 +449,7 @@ def Direct(
 
                 it_time = dt.datetime.now() - it_start
                 if disp is True: 
-                    print(f'Took: {it_time}. Best value: {elite.f}.')
+                    print(f'it {i} - rects: {len(parents)}. Took: {it_time}. Best value: {elite.f}.')
                 if callback is not None:
                     callback(elite)
 

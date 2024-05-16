@@ -28,14 +28,14 @@ def gen_inds(npop, vsize=args.vp):
 
 
 @jit(nopython=False)
-def Obj(x, callback=False):
+def Obj(x, callback=False, gen=0, cuts=0):
     
     S = Solution(x)
     S._evaluate()
     result = S.Lcoe + S.Penalties
     
     if callback is True:
-        printout = np.array([result] + list(x))
+        printout = np.array([result, gen, cuts] + list(x))
         with objmode():
             csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
             writer(csvfile).writerow(printout)
@@ -98,11 +98,10 @@ if __name__ == '__main__':
         # maxiter=args.i, 
         callback= Callback_1 if args.cb==1 else None, 
         vectorizable=bool(args.vec),
-        workers=args.w,
         # population=args.p,
         # maxfev=np.inf,
         # resolution = res[args.res], # float or array of x.shape
-        rect_dim=-1,
+        rect_dim=4,
         disp = bool(args.ver),
         locally_biased=False,
         restart='Results/History{}.csv'.format(scenario) if args.x == 1 else '',
@@ -120,20 +119,20 @@ if __name__ == '__main__':
               'resolution':res[2],
               # 'population':int(1.25*args.p),
               },
-            {'maxiter':np.inf,
-              'resolution':res[3],
-              # 'population':args.p,
-              },
-            {'maxiter':20,
-              'resolution':res[4],
-              # 'population':args.p,
-              'near_optimal':-1,
-              },  
-            {'maxiter':15,
-              'resolution':res[5],
-              # 'population':args.p,
-              'near_optimal':-1,
-              },
+            # {'maxiter':np.inf,
+            #   'resolution':res[3],
+            #   # 'population':args.p,
+            #   },
+            # {'maxiter':20,
+            #   'resolution':res[4],
+            #   # 'population':args.p,
+            #   'near_optimal':-1,
+            #   },  
+            # {'maxiter':15,
+            #   'resolution':res[5],
+            #   # 'population':args.p,
+            #   'near_optimal':-1,
+            #   },
             )
         )
 

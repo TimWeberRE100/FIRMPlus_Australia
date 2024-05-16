@@ -69,8 +69,8 @@ class hyperrectangle():
         self.length_inds = np.log10(self.ub-self.lb)
 
 @njit
-def hrect_is_semibarren(length_inds, dims, log_min_l):
-    return (length_inds < log_min_l)[dims].prod() == 1
+def hrect_is_semibarren(h, dims, log_min_l):
+    return (h.length_inds < log_min_l)[dims].prod() == 1
 
 @njit
 def hrect_is_barren(length_inds, log_min_l):
@@ -98,24 +98,20 @@ def hrects_is_same(h1, h2, tol=1e-10):
 
 @njit
 def hrects_border(h1, h2, tol = 1e-10):
-
-    lb1, ub1, ndim1 = h1
-    lb2, ub2, ndim2 = h2
     
-    assert ndim1 == ndim2
-    ndim = ndim1
+    assert h1.ndim == h2.ndim 
     # directions where the domains of each h2 touch
-    touch = (((ub2 - lb1) >= -tol) * 
-             ((ub1 - lb2) >= -tol))
+    touch = (((h2.ub - h1.lb) >= -tol) * 
+             ((h1.ub - h2.lb) >= -tol))
 
     # the domains in each direction touch   
-    if not (touch.sum() == ndim):
+    if not (touch.sum() == h1.ndim):
         return False
 
     # in ndim-1 directions the directions' domains overlap (either perfectly, or one inside another)
-    overlap = (signs_of_array(ub2 - ub1, tol) ==
-               signs_of_array(lb1 - lb2, tol))
-    if not (overlap.sum() == ndim-1):
+    overlap = (signs_of_array(h2.ub - h1.ub, tol) ==
+               signs_of_array(h1.lb - h2.lb, tol))
+    if not (overlap.sum() == h1.ndim-1):
         return False
 
     # in exactly one direction domains do not overlap (although they may touch)
@@ -123,8 +119,8 @@ def hrects_border(h1, h2, tol = 1e-10):
         return False
     
     # adjacent (ub=lb or lb=ub) (higher OR lower) in exactly one dimension
-    adjacency = ((np.abs(ub2 - lb1) < tol) +
-                 (np.abs(lb2 - ub1) < tol)) 
+    adjacency = ((np.abs(h2.ub - h1.lb) < tol) +
+                 (np.abs(h2.lb - h1.ub) < tol)) 
     if not (adjacency.sum() == 1):
         return False
 
@@ -211,7 +207,7 @@ def _divide_hrect(hyperrectangle, vectorizable, func, hrect, dims, f_args, log_m
         f_values = func(centres.T, *f_args, gen, cuts)
 
     else:
-        f_values=_mp_evaluateobjective(func, centres, f_args)
+        f_values=_mp_evaluateobjective(func, centres, f_args, gen, cuts)
         
     hrects = [hyperrectangle(
         centres[k], f_values[k], gen, cuts, lbs[k], ubs[k], pf) 
@@ -220,10 +216,10 @@ def _divide_hrect(hyperrectangle, vectorizable, func, hrect, dims, f_args, log_m
     return hrects
 
 @njit(parallel=True)
-def _mp_evaluateobjective(func, centres, f_args):
+def _mp_evaluateobjective(func, centres, f_args, gen, cuts):
     fs = np.empty(len(centres), dtype=np.float64)
     for i in prange(len(centres)):
-        fs[i] = func(centres[i,:], *f_args)
+        fs[i] = func(centres[i,:], *f_args, gen, cuts)
     return fs
 
 
@@ -306,7 +302,7 @@ def Direct(
             if vectorizable: 
                 f = func(np.atleast_2d(centre).T, *f_args, -1, 0)[0]
             else: 
-                f = func(centre, *f_args)
+                f = func(centre, *f_args, -1, 0)
                 
             elite = hyperrectangle(centre, f, -1, 0, lb, ub, np.inf)
             parents = np.array([elite])
@@ -384,7 +380,7 @@ def Direct(
                     # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
                     prev_bests = childless[best]
                     new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
-                                             if hrects_border((b.ub, b.lb, b.ndim), (hrect.ub, hrect.lb, hrect.ndim)) 
+                                             if hrects_border(b, hrect) 
                                              and not hrect_is_barren(hrect.length_inds, log_min_l)], dtype=np.int64)
                     # combine new and archived hrects to be split next iteration
                     new_accepted = np.unique(np.concatenate((best, new_accepted)))
@@ -413,7 +409,7 @@ def Direct(
                     if near_optimal == -1:
                         best_, barrencount = [], 0
                         for f_i in fs:
-                            if not hrect_is_semibarren(childless[f_i].length_inds, dims, log_min_l):
+                            if not hrect_is_semibarren(childless[f_i], dims, log_min_l):
                                 best_.append(f_i)
                             else: 
                                 barrencount +=1
@@ -430,18 +426,24 @@ def Direct(
                     ineligible = np.array([], dtype=np.int64)
                     if len(best)>0:
                         ineligible = np.concatenate((best, _borderheuristic(list(childless), list(childless[best]))))
+                        semi_barr = _semibarren_speedup(list(childless), dims, log_min_l)
+                        ineligible = np.union1d(ineligible, semi_barr)
                     for b in tqdm(best, desc=f'it {i}: #hrects = {len(parents)}. Sorting rectangles:', leave=False):
-                        new_accepted = _accept_rect(list(childless), childless[b], ineligible, dims, log_min_l)
-                        ineligible = np.concatenate((ineligible, new_accepted))
-
+                        eligible = np.setdiff1d(np.arange(len(childless)), ineligible).astype(np.int64)
+                        if len(eligible)==0:
+                            break
+                        new_accepted = _accept_rect(list(childless), childless[b], eligible)
+                        ineligible = np.union1d(ineligible, new_accepted)
+    
                     # combine new and archived hrects to be split next iteration
                     new_accepted = np.unique(np.concatenate((best, new_accepted)))
                     # remove local minima
                     new_accepted = np.setdiff1d(new_accepted, lm_i, assume_unique=True)
                     # remove non-parents
-                    new_accepted = [i for i in new_accepted if not 
-                                    hrect_is_semibarren(childless[i].length_inds, dims, log_min_l)]
-
+                    new_accepted = np.setdiff1d(new_accepted, 
+                                                _semibarren_speedup(list(childless), dims, log_min_l), 
+                                                assume_unique=True)
+    
                     # get list-indices of childless hrects which are not to be split
                     to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
                     
@@ -472,17 +474,24 @@ def Direct(
     return DirectResult(elite.centre, elite.f, fev, i, interrupted, 
                           elite.lb, elite.ub, elite.volume, elite.volume/total_vol)
 
-@njit
-def _accept_rect(rects, b, ineligible, dims, log_min_l):
-    accepted = []
-    for i, hrect in enumerate(rects):
-        if i in ineligible: 
-            continue
-        if hrect_is_semibarren(hrect.length_inds, dims, log_min_l):
-            continue
-        if hrects_border((b.lb, b.ub, b.ndim), (hrect.lb, hrect.ub, hrect.ndim)):
-            accepted.append(i)
-    return np.array(accepted)
+@njit(parallel=True)
+def _semibarren_speedup(rects, dims, log_min_l):
+    accepted = np.zeros(len(rects), dtype=np.bool_)
+    for i in prange(len(rects)):
+        if hrect_is_semibarren(rects[i], dims, log_min_l):
+            accepted[i] = True
+    
+    return np.arange(len(rects), dtype=np.int64)[accepted]
+
+@njit(parallel=True)
+def _accept_rect(rects, b, eligible):
+    accepted = np.zeros(len(eligible), dtype=np.bool_)
+    for i in prange(len(eligible)):
+        if hrects_border(b, rects[eligible[i]]):
+            accepted[i] = True
+    
+    return eligible[accepted]
+
         
 
 @njit

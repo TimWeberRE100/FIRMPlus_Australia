@@ -8,7 +8,7 @@ Created on Wed Apr 17 15:27:19 2024
 
 import numpy as np
 import datetime as dt
-from numba import jit, objmode
+from numba import njit
 from csv import writer
 
 from Input import *
@@ -27,43 +27,22 @@ def gen_inds(npop, vsize=args.vp):
     return inds
 
 
-@jit(nopython=False)
-def Obj(x, callback=False, gen=0, cuts=0):
-    
+@njit
+def Obj(x):
     S = Solution(x)
     S._evaluate()
     result = S.Lcoe + S.Penalties
-    
-    if callback is True:
-        printout = np.array([result, gen, cuts] + list(x))
-        with objmode():
-            csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
-            writer(csvfile).writerow(printout)
-            csvfile.close()
     return result
     
     
-@jit(nopython=False)
-def Vobj(x, callback=False, maxvectorwidth=args.vp, gen=0, cuts=0):
-    #TODO 
-    # Better way of gen and cuts
+@njit
+def Vobj(x, maxvectorwidth=args.vp):
     results = np.empty(len(x.T), dtype=np.float64)
-    
     inds = gen_inds(len(x.T), maxvectorwidth)
     for ind in inds:
         S = VSolution(x[:, ind])
         S._evaluate()
         results[ind] = S.Lcoe + S.Penalties
-    
-    if callback is True:
-        gen = gen*np.ones((len(x.T), 1), dtype=np.int64)
-        cuts = cuts*np.ones((len(x.T), 1), dtype=np.int64)
-        
-        printout = np.concatenate((results.reshape(-1, 1), gen, cuts, x.T), axis = 1)
-        with objmode():
-            csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
-            writer(csvfile).writerows(printout)
-            csvfile.close()
     return results
     
 def Callback_1(h):
@@ -77,7 +56,7 @@ def Init_callback():
 if __name__ == '__main__':
     starttime = dt.datetime.now()
     print("Optimisation starts at", starttime)
-    
+
     if args.cb > 0 and args.x == 0: 
         Init_callback()
     
@@ -94,17 +73,18 @@ if __name__ == '__main__':
     result = Direct(
         func=Vobj if args.vec else Obj, 
         bounds=(lb, ub),
-        f_args=(args.cb==2, args.vp) if args.vec else (args.cb==2,),
+        f_args=(args.vp,) if args.vec else (),
         # maxiter=args.i, 
         callback= Callback_1 if args.cb==1 else None, 
+        printfile='Results/History{}'.format(scenario) if args.cb == 2 else '',
         vectorizable=bool(args.vec),
         # population=args.p,
         # maxfev=np.inf,
         # resolution = res[args.res], # float or array of x.shape
-        rect_dim=6,
+        rect_dim=4,
         disp = bool(args.ver),
         locally_biased=False,
-        restart='Results/History{}.csv'.format(scenario) if args.x == 1 else '',
+        restart='Results/History{}'.format(scenario) if args.x == 1 else '',
         near_optimal=1.25,
         program=(
             {'maxiter':100,
@@ -129,26 +109,19 @@ if __name__ == '__main__':
               },
             {'maxiter':np.inf,
              'resolution':res[1],
-             'population':np.inf,
               },
             {'maxiter':np.inf,
              'resolution':res[2],
-             'population':np.inf,
               },
-            # {'maxiter':np.inf,
-            #   'resolution':res[3],
-            #   # 'population':args.p,
-            #   },
-            # {'maxiter':20,
-            #   'resolution':res[4],
-            #   # 'population':args.p,
-            #   'near_optimal':-1,
-            #   },  
-            # {'maxiter':15,
-            #   'resolution':res[5],
-            #   # 'population':args.p,
-            #   'near_optimal':-1,
-            #   },
+            {'maxiter':np.inf,
+              'resolution':res[3],
+              },
+            {'maxiter':np.inf,
+              'resolution':res[4],
+              },  
+            {'maxiter':np.inf,
+              'resolution':res[5],
+              },
             )
         )
 

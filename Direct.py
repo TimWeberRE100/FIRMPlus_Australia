@@ -57,8 +57,8 @@ if __name__ == '__main__':
     starttime = dt.datetime.now()
     print("Optimisation starts at", starttime)
 
-    if args.cb > 0 and args.x == 0: 
-        Init_callback()
+    # if args.cb > 0 and args.x == 0: 
+    #     Init_callback()
     
     z = (pzones+wzones+nodes)
     ultralow_res = np.array([1.0]*z + [100.0]) # 1 GW, 100 GWh
@@ -81,7 +81,7 @@ if __name__ == '__main__':
         # population=args.p,
         # maxfev=np.inf,
         # resolution = res[args.res], # float or array of x.shape
-        rect_dim=4,
+        rect_dim=6,
         disp = bool(args.ver),
         locally_biased=False,
         restart='Results/History{}'.format(scenario) if args.x == 1 else '',
@@ -89,13 +89,13 @@ if __name__ == '__main__':
         program=(
             {'maxiter':100,
              'resolution':res[0],
-             'population':10,
+             'population':20,
               },
-            {'maxiter':100,
+            {'maxiter':20,
              'resolution':res[1],
              'population':10,
               },
-            {'maxiter':100,
+            {'maxiter':20,
              'resolution':res[2],
              'population':10,
               },
@@ -105,22 +105,17 @@ if __name__ == '__main__':
               },
             {'maxiter':np.inf,
              'resolution':res[0],
-             'population':np.inf,
+             'population':50,
               },
-            {'maxiter':np.inf,
-             'resolution':res[1],
+            {'resolution':res[1],
               },
-            {'maxiter':np.inf,
-             'resolution':res[2],
+            {'resolution':res[2],
               },
-            {'maxiter':np.inf,
-              'resolution':res[3],
+            {'resolution':res[3],
               },
-            {'maxiter':np.inf,
-              'resolution':res[4],
+            {'resolution':res[4],
               },  
-            {'maxiter':np.inf,
-              'resolution':res[5],
+            {'resolution':res[5],
               },
             )
         )

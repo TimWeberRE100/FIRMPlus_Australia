@@ -37,7 +37,7 @@ else:
     clock.argtypes = []
     @njit
     def cclock():
-        return clock()/1000/10 #cpu-seconds
+        return clock()/10_000 #cpu-seconds
 # =============================================================================
 
 spec = [
@@ -422,12 +422,26 @@ def Direct(
                 
                 if len(best)==0:
                     near_optimal_res = False
-                
+
+                best = fs[nearoptimalmask]
+                # list indices of best rectangles which are semibarren
+                best_semibarr = _semibarren_speedup(list(childless[best]), dims, log_min_l)
+                # include min(pop, len) rectangles which are not barren + barren best rectangles (for neighbours)
+                _best, barr_count = [],0 
+                for j, k in enumerate(best): 
+                    _best.append(k)
+                    if j in best_semibarr:
+                        barr_count+=1
+                    if len(_best) - barr_count >= min(population, len(best)):
+                        break
+                best=np.array(_best)
+
                 #This may seem overcomplicated, but it greatly improves speed with 10000+ best in near-optimal exploration
                 new_accepted = np.array([], dtype=np.int64)
                 ineligible = np.array([], dtype=np.int64)
                 if len(best)>0:
                     ineligible = np.concatenate((best, _borderheuristic(list(childless), list(childless[best]))))
+                     
                     semi_barr = _semibarren_speedup(list(childless), dims, log_min_l)
                     ineligible = np.union1d(ineligible, semi_barr)
                 
@@ -438,12 +452,13 @@ def Direct(
                         new_accepted = _accept_rect(list(childless), childless[b], eligible)
                         ineligible = np.union1d(ineligible, new_accepted)
                 
+                    # combine new and archived hrects to be split next iteration
+                    new_accepted = np.unique(np.concatenate((best, new_accepted)))
+
                     # Wait until now to remove semibarren best rectangles because we wanted to
                     # include their neighbours
                     new_accepted = np.setdiff1d(new_accepted, semi_barr, assume_unique=True)
 
-                    # combine new and archived hrects to be split next iteration
-                    new_accepted = np.unique(np.concatenate((best, new_accepted)))
                     # remove local minima
                     new_accepted = np.setdiff1d(new_accepted, lm_i, assume_unique=True)
 

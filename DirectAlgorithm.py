@@ -345,7 +345,7 @@ def Direct(
         rect_dim = len(lb) if rect_dim==-1 else rect_dim
         assert rect_dim <= ndim
         dims = np.arange(rect_dim, dtype=np.int64)
-        conv_max = ndim // rect_dim
+        conv_max = ndim // rect_dim + min(1, ndim%rect_dim)
 
         log_min_l = np.log10(resolution)
         total_vol = (ub-lb).prod()
@@ -359,7 +359,7 @@ def Direct(
                and total_vol > 0 # stop when resolution fully resolved
                # and near_optimal_res # no more near_optimal space within resolution
             ): 
-            
+
             it_start = dt.datetime.now()
             
             # split all hrects to be split from previous iteration
@@ -373,8 +373,8 @@ def Direct(
     
             # generate array of list-index, cost, and volume
             fvs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
-            # Make sure we haven't lost search hyperspace
-            # assert abs(1-sum(fvs[:, 2])/total_vol) < 1e-6, f'{sum(fvs[:, 2])} / {total_vol}' # tolerance for floating point 
+            # Make sure we haven't lost search space
+            assert abs(1-sum(fvs[:, 2])/total_vol) < 1e-6, f'{sum(fvs[:, 2])} / {total_vol}' # tolerance for floating point 
             
             # sort list indices by cost
             fvs = fvs[fvs[:,1].argsort(), :]
@@ -414,7 +414,7 @@ def Direct(
                 lm_i = np.array([j for j in fs if hrect_is_barren(childless[j], log_min_l)], dtype=np.int64)
                 total_vol -= sum([h.volume for h in childless[lm_i]])
                 local_minima = np.concatenate((local_minima, np.array(childless[lm_i])))
-                
+
                 # rotate splitting axes
                 dims += rect_dim 
                 dims %= ndim
@@ -442,20 +442,23 @@ def Direct(
                 conv_count=0
             
             if len(new_accepted) == 0 and conv_count >= conv_max:
-                print('neighbours')
                 new_accepted=np.array([], dtype=np.int64)
                 near_optimal_threshold = elite.f*near_optimal
                 near_optimal_minima = np.array([h for h in local_minima if h.f < near_optimal_threshold])
-                eligible = np.setdiff1d(np.arange(len(childless), dtype=np.int64), lm_i)
-                eligible = np.setdiff1d(eligible, _borderheuristic(list(childless[eligible]), list(near_optimal_minima)), assume_unique=True)
+                eligible = np.setdiff1d(np.arange(len(childless), dtype=np.int64),
+                                        lm_i, 
+                                        assume_unique=True)
+                eligible = np.setdiff1d(eligible, 
+                                        eligible[_borderheuristic(list(childless[eligible]), list(near_optimal_minima))],
+                                        assume_unique=True)
                 eligible = np.setdiff1d(eligible, _semibarren_speedup(list(childless[eligible]), dims, log_min_l), assume_unique=True)
                 
                 new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible)
 
                 to_arch = np.setdiff1d(np.arange(len(childless), dtype=np.int64), new_accepted, assume_unique=True)
+                to_arch = np.setdiff1d(to_arch, lm_i, assume_unique=True)
             if len(new_accepted) != 0:
                 conv_count=0
-                
 
             if printfile != '':
                 with open(printfile+'-parents.csv', 'a', newline='') as csvfile:
@@ -515,23 +518,14 @@ def Direct(
 
 @njit(parallel=True)
 def _semibarren_speedup(rects, dims, log_min_l):
-    accepted = np.zeros(len(rects), dtype=np.bool_)
+    accepted = np.empty(len(rects), dtype=np.bool_)
     for i in prange(len(rects)):
-        if hrect_is_semibarren(rects[i], dims, log_min_l):
-            accepted[i] = True
-    
+        accepted[i] = hrect_is_semibarren(rects[i], dims, log_min_l)
     return np.arange(len(rects), dtype=np.int64)[accepted]
-
-@njit
-def _accept_rect(h, minima):
-    for m in minima:
-        if hrects_border(h, m):
-            return True
-    return False
 
 @njit(parallel=True)
 def sortrectangles(minima, archive, eligible):
-    accepted=np.empty(len(eligible), dtype=np.bool_)
+    accepted=np.zeros(len(eligible), dtype=np.bool_)
 
     if len(eligible) <= 10000:
         time_test_range = 0
@@ -539,23 +533,28 @@ def sortrectangles(minima, archive, eligible):
         time_test_range = len(eligible//100)
         start = cclock()
         for i in prange(time_test_range):
-            accepted[i] = _accept_rect(archive[eligible[i]], minima)
+            for m in minima:
+                if hrects_border(archive[eligible[i]], m):
+                    accepted[i] = True
+                    break
         ttime = cclock() - start
         rtime = (len(eligible) - time_test_range)*ttime/time_test_range
         rh, rm, rs = int(rtime//3600), int(rtime%3600//60), int(rtime%3600%60)
         print(f'Identifying near-optimal neighbours. Estimated time: {rh}:{rm}:{rs}')
 
     for i in prange(time_test_range, len(eligible)):
-        accepted[i] = _accept_rect(archive[eligible[i]], minima)
+        for m in minima:
+            if hrects_border(archive[eligible[i]], m):
+                accepted[i] = True
+                break
 
-    return np.arange(len(eligible), dtype=np.int64)[accepted]
+    return eligible[accepted]
         
 
 @njit(parallel=True)
 def _borderheuristic(rects, best):
-    ndim = best[0].ndim
-    minlb =  np.inf*np.ones(ndim, dtype=np.float64)
-    maxub = -np.inf*np.ones(ndim, dtype=np.float64)
+    minlb =  np.inf*np.ones(best[0].ndim, dtype=np.float64)
+    maxub = -np.inf*np.ones(best[0].ndim, dtype=np.float64)
     
     for i in range(len(best)): 
         minlb = np.minimum(minlb, best[i].lb)
@@ -563,8 +562,7 @@ def _borderheuristic(rects, best):
     
     accepted = np.empty(len(rects), dtype=np.bool_)
     for i in prange(len(rects)):
-        h = rects[i]
-        accepted[i] = ((h.lb >= maxub).sum() + (h.ub <= minlb).sum() > 1)
+        accepted[i] = ((rects[i].lb >= maxub).sum() + (rects[i].ub <= minlb).sum() > 1)
 
     return np.arange(len(rects), dtype=np.int64)[accepted]
     

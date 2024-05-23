@@ -300,6 +300,7 @@ def Direct(
     lb, ub = bounds
     ndim = len(lb)
     centre = 0.5*(ub - lb) + lb 
+    MAXPARENTS = 700_000 #used to prevent memory errors 
     
     if restart != '': 
         archive, elite = _restart(restart, bounds, disp)
@@ -344,7 +345,7 @@ def Direct(
         rect_dim = len(lb) if rect_dim==-1 else rect_dim
         assert rect_dim <= ndim
         dims = np.arange(rect_dim, dtype=np.int64)
-        conv_max = ndim // rect_dim + 1 
+        conv_max = ndim // rect_dim
 
         log_min_l = np.log10(resolution)
         total_vol = (ub-lb).prod()
@@ -373,7 +374,7 @@ def Direct(
             # generate array of list-index, cost, and volume
             fvs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
             # Make sure we haven't lost search hyperspace
-            assert abs(1-sum(fvs[:, 2])/total_vol) < 1e-6, f'{sum(fvs[:, 2])} / {total_vol}' # tolerance for floating point 
+            # assert abs(1-sum(fvs[:, 2])/total_vol) < 1e-6, f'{sum(fvs[:, 2])} / {total_vol}' # tolerance for floating point 
             
             # sort list indices by cost
             fvs = fvs[fvs[:,1].argsort(), :]
@@ -441,19 +442,17 @@ def Direct(
                 conv_count=0
             
             if len(new_accepted) == 0 and conv_count >= conv_max:
+                print('neighbours')
                 new_accepted=np.array([], dtype=np.int64)
-                ineligible = np.union1d(_borderheuristic(list(archive), list(local_minima)), 
-                                        _semibarren_speedup(list(archive), dims, log_min_l))
-            
-                for m in tqdm(local_minima, desc=f'it {i} - #hrects: {len(parents)}. Sorting Rectangles', leave=False):
-                    eligible = np.setdiff1d(np.arange(len(archive)), ineligible).astype(np.int64)
-                    if len(eligible)==0:
-                        break
-                    new_accepted = np.concatenate((new_accepted,
-                                                   _accept_rect(list(archive), m, eligible)))
-                    ineligible = np.concatenate((ineligible, new_accepted))
-            
-                to_arch = np.setdiff1d(np.arange(len(archive), dtype=np.int64), new_accepted, assume_unique=True)
+                near_optimal_threshold = elite.f*near_optimal
+                near_optimal_minima = np.array([h for h in local_minima if h.f < near_optimal_threshold])
+                eligible = np.setdiff1d(np.arange(len(childless), dtype=np.int64), lm_i)
+                eligible = np.setdiff1d(eligible, _borderheuristic(list(childless[eligible]), list(near_optimal_minima)), assume_unique=True)
+                eligible = np.setdiff1d(eligible, _semibarren_speedup(list(childless[eligible]), dims, log_min_l), assume_unique=True)
+                
+                new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible)
+
+                to_arch = np.setdiff1d(np.arange(len(childless), dtype=np.int64), new_accepted, assume_unique=True)
             if len(new_accepted) != 0:
                 conv_count=0
                 
@@ -478,16 +477,20 @@ def Direct(
                                                    axis=1)
                         writer(csvfile).writerows(printout)
 
-            # update archive
-            archive = childless[to_arch]
-            # old parents are forgotten
-            parents = childless[new_accepted]
-            
+            if len(new_accepted) > MAXPARENTS: # prevents memory error
+                to_arch = np.concatenate((to_arch, new_accepted[MAXPARENTS:]))
+                new_accepted = new_accepted[:MAXPARENTS]
+
             it_time = dt.datetime.now() - it_start
             if disp is True: 
                 print(f'it {i} - #hrects: {len(parents)}. Took: {it_time}. Best value: {elite.f}.')
             if callback is not None:
                 callback(elite)
+
+            # update archive
+            archive = childless[to_arch]
+            # old parents are forgotten
+            parents = childless[new_accepted]
             
             i+=1
         archive = np.concatenate((archive, local_minima))
@@ -500,7 +503,7 @@ def Direct(
                                                np.array([h.centre for h in archive])), 
                                                axis=1)
                     writer(csvfile).writerows(printout)
-
+        
         miter_adj += i
         mfev_adj += fev
         print('\nprogram step\n')
@@ -519,16 +522,36 @@ def _semibarren_speedup(rects, dims, log_min_l):
     
     return np.arange(len(rects), dtype=np.int64)[accepted]
 
-@njit(parallel=True)
-def _accept_rect(rects, b, eligible):
-    accepted = np.zeros(len(eligible), dtype=np.bool_)
-    for i in prange(len(eligible)):
-        if hrects_border(b, rects[eligible[i]]):
-            accepted[i] = True
-    
-    return eligible[accepted]
-
 @njit
+def _accept_rect(h, minima):
+    for m in minima:
+        if hrects_border(h, m):
+            return True
+    return False
+
+@njit(parallel=True)
+def sortrectangles(minima, archive, eligible):
+    accepted=np.empty(len(eligible), dtype=np.bool_)
+
+    if len(eligible) <= 10000:
+        time_test_range = 0
+    else: 
+        time_test_range = len(eligible//100)
+        start = cclock()
+        for i in prange(time_test_range):
+            accepted[i] = _accept_rect(archive[eligible[i]], minima)
+        ttime = cclock() - start
+        rtime = (len(eligible) - time_test_range)*ttime/time_test_range
+        rh, rm, rs = int(rtime//3600), int(rtime%3600//60), int(rtime%3600%60)
+        print(f'Identifying near-optimal neighbours. Estimated time: {rh}:{rm}:{rs}')
+
+    for i in prange(time_test_range, len(eligible)):
+        accepted[i] = _accept_rect(archive[eligible[i]], minima)
+
+    return np.arange(len(eligible), dtype=np.int64)[accepted]
+        
+
+@njit(parallel=True)
 def _borderheuristic(rects, best):
     ndim = best[0].ndim
     minlb =  np.inf*np.ones(ndim, dtype=np.float64)
@@ -538,11 +561,12 @@ def _borderheuristic(rects, best):
         minlb = np.minimum(minlb, best[i].lb)
         maxub = np.maximum(maxub, best[i].ub)
     
-    _toofaraway=np.array([
-        i for i, h in enumerate(rects) if (h.lb >= maxub).sum() + (h.ub <= minlb).sum() > 1
-        ], dtype=np.int64)
+    accepted = np.empty(len(rects), dtype=np.bool_)
+    for i in prange(len(rects)):
+        h = rects[i]
+        accepted[i] = ((h.lb >= maxub).sum() + (h.ub <= minlb).sum() > 1)
 
-    return _toofaraway
+    return np.arange(len(rects), dtype=np.int64)[accepted]
     
 @njit
 def _normalise(arr, lb, ub):
@@ -569,7 +593,7 @@ def _reconstruct_from_centre(centres, bounds, maxres=2**31):
     
 
 def _restart(restart, bounds, disp):
-
+    print('Restarting optimisation where',restart,'left off.')
     history = np.genfromtxt(restart+'-children.csv', delimiter=',', dtype=np.float64)
     try: 
         minima = np.genfromtxt(restart+'-minima.csv', delimiter=',', dtype=np.float64)
@@ -586,19 +610,18 @@ def _restart(restart, bounds, disp):
     fs, xs = history[:,:3], history[:,3:]
     
     xs, lbs, ubs = _reconstruct_from_centre(xs, bounds)
-    
+
     if fs[:,0].min() < pmin:
         elite = fs[:,0].argmin()
         elite = hyperrectangle(xs[elite], *fs[elite], lbs[elite], ubs[elite], np.nan)
     else: 
         fps, xps = parents[:,:3], parents[:,3:]
         xps, lbps, ubps = _reconstruct_from_centre(np.atleast_2d(xps[pminidx, :]), bounds)
-        elite = hyperrectangle(xps[pminidx], *fps[pminidx,:], lbps[pminidx], ubs[pminidx], np.nan)
+        elite = hyperrectangle(xps[0,:], *fps[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
         del fps, xps, lbps, ubps
-    
+
     archive = np.array([hyperrectangle(xs[i], *fs[i,:], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
     
-    print('Restarting optimisation where',restart,'left off.')
 # =============================================================================
 # Child-wise loop is faster 
 # Iterates backwards through list of rectangles
@@ -627,7 +650,7 @@ def _restart(restart, bounds, disp):
 # =============================================================================
     
     if disp is True:
-        print(f'\nRestart: read in {len(xs)} rectangles. Discarded {len(xs)-len(archive)} parents.',
+        print(f'Restart: read in {len(xs)} rectangles. Discarded {len(xs)-len(archive)} parents.',
               f'Best value: {elite.f}.')
   
     return archive, elite

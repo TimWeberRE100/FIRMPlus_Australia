@@ -47,8 +47,8 @@ spec = [
     ('parent_f', float64),
     ('lb', float64[:]),
     ('ub', float64[:]),
-    ('rdif', float64),
-    ('adif', float64),
+    # ('rdif', float64),
+    # ('adif', float64),
     ('generation', int64),
     ('cuts', int64),
     ('volume', float64),
@@ -349,7 +349,7 @@ def Direct(
 
         log_min_l = np.log10(resolution)
         total_vol = (ub-lb).prod()
-        local_minima = np.array([], dtype=hyperrectangle)
+        landlocked_minima, edge_minima = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         # near_optimal_res = True
         conv_count = 0
         
@@ -390,9 +390,16 @@ def Direct(
             best = fs[nearoptimalmask] 
             best = best[:min(population, len(best))]
             
+            # maximum resolution rectangles 
             lm_i = np.array([j for j in fs if hrect_is_barren(childless[j], log_min_l)], dtype=np.int64)
             total_vol -= sum([h.volume for h in childless[lm_i]])
-            local_minima = np.concatenate((local_minima, np.array(childless[lm_i])))
+            
+            llm_i = landlocked(childless, lm_i, 
+                                np.setdiff1d(np.arange(childless, dtype=np.int64), lm_i, assume_unique=True),
+                                True, (lb, ub))
+
+            landlocked_minima = np.concatenate(landlocked_minima, childless[llm_i])
+            edge_minima = np.concatenate(edge_minima, childless[np.setdiff1d(lm_i, landlocked_minima)])
 
             if printfile != '':
                 print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
@@ -409,9 +416,10 @@ def Direct(
                                                    axis=1)
                         writer(csvfile).writerows(printout)
                 with open(printfile+'-minima.csv', 'w', newline='') as csvfile:
-                    if len(local_minima) > 0:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in local_minima]), 
-                                                   np.array([h.centre for h in local_minima])), 
+                    minima = np.concatenate((landlocked_minima, edge_minima))
+                    if len(minima) > 0:
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in minima]), 
+                                                   np.array([h.centre for h in minima])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
             print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*50}', end='\r', flush=True)
@@ -467,7 +475,7 @@ def Direct(
             if len(new_accepted) == 0 and conv_count >= conv_max:
                 new_accepted=np.array([], dtype=np.int64)
                 near_optimal_threshold = elite.f*near_optimal
-                near_optimal_minima = np.array([h for h in local_minima if h.f < near_optimal_threshold])
+                near_optimal_minima = np.array([h for h in edge_minima if h.f < near_optimal_threshold])
                 eligible = np.setdiff1d(np.arange(len(childless), dtype=np.int64),
                                         lm_i, 
                                         assume_unique=True)
@@ -477,7 +485,7 @@ def Direct(
                 eligible = np.setdiff1d(eligible, _semibarren_speedup(list(childless[eligible]), dims, log_min_l), assume_unique=True)
                 
                 print(f'it {i} - #hrects: {len(parents)}. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
-                if len(eligible) <= cpu_count()*14 or len(eligible)*len(near_optimal_minima) >= 10e11:
+                if len(eligible) <= cpu_count()*14 or len(eligible)*len(near_optimal_minima) >= 10e10:
                     print('< a few minutes. ', end ='', flush=True)
                     new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible)
                 else: 
@@ -512,7 +520,7 @@ def Direct(
             parents = childless[new_accepted]
             
             i+=1
-        archive = np.concatenate((archive, local_minima))
+        archive = np.concatenate((archive, landlocked_minima, edge_minima))
         if printfile != '':
             print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
             with open(printfile+'-minima.csv', 'w') as csvfile:
@@ -532,6 +540,41 @@ def Direct(
     print('\n')
     return DirectResult(elite.centre, elite.f, fev, i, 
                           elite.lb, elite.ub, elite.volume, elite.volume/total_vol)                  
+
+@njit 
+def _borderbysum(h, archive, secondpool, bounds):
+    """ Returns True if h is landlocked by secondpool """
+    """ Assumes h is of the smallest resolution in archive """
+    lb, ub = bounds
+    faces = h.ndim*2 - (h.ub == ub).sum() - (h.lb == lb).sum()
+    for j in secondpool:
+        h2 = archive[j]
+        if hrects_border(h, h2):
+            faces -= 1 
+        if faces == 0:
+            return True
+    return False
+
+@njit
+def _islandborder(h, archive, secondpool):
+    """ Returns True if h is islanded from secondpool """
+    for j in secondpool:
+        h2 = archive[j]
+        if hrects_border(h, h2):
+            return False
+    return True
+
+@njit(parallel=True)
+def landlocked(archive, pool, antipool, highest_res=False, bounds=None):
+    accepted = np.empty(len(pool), dtype=np.bool_)
+    if len(pool) >= len(antipool) or not highest_res:
+        for i in prange(len(pool)):
+            accepted[i] = _islandborder(archive[pool[i]], archive, antipool)
+    else: # if len(pool) > len(antipool) and highest_res:
+        for i in prange(len(pool)):
+            accepted[i] = _borderbysum(archive[pool[i]], archive, pool, bounds)
+    return pool[accepted]
+        
 
 
 @njit(parallel=True)

@@ -6,14 +6,14 @@ Created on Thu Apr 18 08:28:16 2024
 """
 
 import numpy as np 
-from numba import jit, njit, prange, float64, int64, boolean
+from numba import njit, prange, float64, int64, objmode
 from numba.experimental import jitclass
 import datetime as dt
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count
 import warnings
 from csv import writer
-
+from multiprocessing import cpu_count
+from time import sleep 
 
 # =============================================================================
 # njit compatible timer
@@ -366,6 +366,7 @@ def Direct(
             new_hrects = np.array([hrect for parent in 
                                    tqdm(parents, desc=f'it {i} - #hrects: {len(parents)}. Evaluating Rectangles', leave=False)
                                    for hrect in _divide_hrect(func, parent, dims, f_args, log_min_l)])
+            print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles', end='\r', flush=True)
             fev += len(new_hrects)
     
             # all hrects which do not have any children  
@@ -389,6 +390,32 @@ def Direct(
             best = fs[nearoptimalmask] 
             best = best[:min(population, len(best))]
             
+            lm_i = np.array([j for j in fs if hrect_is_barren(childless[j], log_min_l)], dtype=np.int64)
+            total_vol -= sum([h.volume for h in childless[lm_i]])
+            local_minima = np.concatenate((local_minima, np.array(childless[lm_i])))
+
+            if printfile != '':
+                print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
+                with open(printfile+'-parents.csv', 'a', newline='') as csvfile:
+                    if len(parents) > 0:
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents]), 
+                                                   np.array([h.centre for h in parents])), 
+                                                   axis=1)
+                        writer(csvfile).writerows(printout)
+                with open(printfile+'-children.csv', 'w', newline='') as csvfile:
+                    if len(childless) > 0:
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
+                                                   np.array([h.centre for h in childless])), 
+                                                   axis=1)
+                        writer(csvfile).writerows(printout)
+                with open(printfile+'-minima.csv', 'w', newline='') as csvfile:
+                    if len(local_minima) > 0:
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in local_minima]), 
+                                                   np.array([h.centre for h in local_minima])), 
+                                                   axis=1)
+                        writer(csvfile).writerows(printout)
+            print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*50}', end='\r', flush=True)
+
             if locally_biased is True:
                 # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
                 prev_bests = childless[best]
@@ -411,10 +438,6 @@ def Direct(
                 dims += rect_dim 
                 dims %= ndim
             else: 
-                lm_i = np.array([j for j in fs if hrect_is_barren(childless[j], log_min_l)], dtype=np.int64)
-                total_vol -= sum([h.volume for h in childless[lm_i]])
-                local_minima = np.concatenate((local_minima, np.array(childless[lm_i])))
-
                 # rotate splitting axes
                 dims += rect_dim 
                 dims %= ndim
@@ -440,7 +463,7 @@ def Direct(
                 conv_count+=1
             else: 
                 conv_count=0
-            
+
             if len(new_accepted) == 0 and conv_count >= conv_max:
                 new_accepted=np.array([], dtype=np.int64)
                 near_optimal_threshold = elite.f*near_optimal
@@ -453,32 +476,25 @@ def Direct(
                                         assume_unique=True)
                 eligible = np.setdiff1d(eligible, _semibarren_speedup(list(childless[eligible]), dims, log_min_l), assume_unique=True)
                 
-                new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible)
+                print(f'it {i} - #hrects: {len(parents)}. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
+                if len(eligible) <= cpu_count()*14 or len(eligible)*len(near_optimal_minima) >= 10e11:
+                    print('< a few minutes. ', end ='', flush=True)
+                    new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible)
+                else: 
+                    time_test_range = cpu_count()*7
+                    sort_start = dt.datetime.now()
+                    new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible[:time_test_range])
+                    sort_time = (len(eligible) - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
+                    print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
+                    new_accepted = np.concatenate((new_accepted, 
+                                                   sortrectangles(list(near_optimal_minima), list(childless), eligible[time_test_range:])))
+                print('Done.', end ='\r', flush=True)
+                print(' '*150, end='\r', flush=True)
 
                 to_arch = np.setdiff1d(np.arange(len(childless), dtype=np.int64), new_accepted, assume_unique=True)
                 to_arch = np.setdiff1d(to_arch, lm_i, assume_unique=True)
             if len(new_accepted) != 0:
                 conv_count=0
-
-            if printfile != '':
-                with open(printfile+'-parents.csv', 'a', newline='') as csvfile:
-                    if len(parents) > 0:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents]), 
-                                                   np.array([h.centre for h in parents])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
-                with open(printfile+'-children.csv', 'w', newline='') as csvfile:
-                    if len(childless) > 0:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
-                                                   np.array([h.centre for h in childless])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
-                with open(printfile+'-minima.csv', 'w', newline='') as csvfile:
-                    if len(local_minima) > 0:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in local_minima]), 
-                                                   np.array([h.centre for h in local_minima])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
 
             if len(new_accepted) > MAXPARENTS: # prevents memory error
                 to_arch = np.concatenate((to_arch, new_accepted[MAXPARENTS:]))
@@ -486,7 +502,7 @@ def Direct(
 
             it_time = dt.datetime.now() - it_start
             if disp is True: 
-                print(f'it {i} - #hrects: {len(parents)}. Took: {it_time}. Best value: {elite.f}.')
+                print(f'it {i} - #hrects: {len(parents)}. Took: {it_time}. Best value: {elite.f}.', flush=True)
             if callback is not None:
                 callback(elite)
 
@@ -498,6 +514,7 @@ def Direct(
             i+=1
         archive = np.concatenate((archive, local_minima))
         if printfile != '':
+            print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
             with open(printfile+'-minima.csv', 'w') as csvfile:
                 writer(csvfile)
             with open(printfile+'-children.csv', 'w', newline='') as csvfile:
@@ -506,10 +523,11 @@ def Direct(
                                                np.array([h.centre for h in archive])), 
                                                axis=1)
                     writer(csvfile).writerows(printout)
+            print(' '*100, end='\r', flush=True)
         
         miter_adj += i
         mfev_adj += fev
-        print('\nprogram step\n')
+        print('-'*50, '\nprogram step\n', '-'*50, flush=True)
 
     print('\n')
     return DirectResult(elite.centre, elite.f, fev, i, 
@@ -526,30 +544,15 @@ def _semibarren_speedup(rects, dims, log_min_l):
 @njit(parallel=True)
 def sortrectangles(minima, archive, eligible):
     accepted=np.zeros(len(eligible), dtype=np.bool_)
-
-    if len(eligible) <= 10000:
-        time_test_range = 0
-    else: 
-        time_test_range = len(eligible//100)
-        start = cclock()
-        for i in prange(time_test_range):
-            for m in minima:
-                if hrects_border(archive[eligible[i]], m):
-                    accepted[i] = True
-                    break
-        ttime = cclock() - start
-        rtime = (len(eligible) - time_test_range)*ttime/time_test_range
-        rh, rm, rs = int(rtime//3600), int(rtime%3600//60), int(rtime%3600%60)
-        print(f'Identifying near-optimal neighbours. Estimated time: {rh}:{rm}:{rs}')
-
-    for i in prange(time_test_range, len(eligible)):
+                                              
+    for i in prange(len(eligible)):
         for m in minima:
             if hrects_border(archive[eligible[i]], m):
                 accepted[i] = True
                 break
 
     return eligible[accepted]
-        
+
 
 @njit(parallel=True)
 def _borderheuristic(rects, best):

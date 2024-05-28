@@ -90,7 +90,7 @@ def hrect_is_parent(lb1, ub1, lb2, ub2, tol=1e-10):
     return ub_bounded and lb_bounded
 
 @njit
-def hrects_is_same(h1, h2, tol=1e-10):
+def hrects_is_same(h1, h2):
     ub_same = (h1.ub == h2.ub).prod() == 1 
     lb_same = (h1.lb == h2.lb).prod() == 1 
     c_same = (h1.centre == h2.centre).prod() == 1
@@ -98,13 +98,13 @@ def hrects_is_same(h1, h2, tol=1e-10):
     return ub_same and lb_same and c_same and f_same
 
 @njit
-def hrects_border(h1, h2, tol = 1e-10):
+def hrects_border(h1, h2, tol = 1e-12):
     # First test is redundant but filters out obivous non-borders fast 
     # the domains in each direction touch   
     if (((h2.ub - h1.lb) >= -tol) * 
         ((h1.ub - h2.lb) >= -tol)# directions where the domains of each h2 touch
         ).sum() != h1.ndim:
-        return False
+        return False        
 
     # in ndim-1 directions the directions' domains overlap (either perfectly, or one inside another)
     overlap = (signs_of_array(h2.ub - h1.ub, tol) ==
@@ -121,6 +121,11 @@ def hrects_border(h1, h2, tol = 1e-10):
     # Direction of adjacency is the direction not overlapping
     if (adjacency == ~overlap).prod() != 1:
         return False
+    
+    # Rectangles are the same
+    if (h1.ub != h2.ub).sum() + (h1.lb != h2.lb).sum() == 0:
+        return False
+    
     return True
 
 @njit
@@ -306,26 +311,25 @@ def Direct(
         archive, elite = _restart(restart, bounds, disp)
         parents, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         archive = np.array(archive)
-        _divide_hrect = _divide_vec if vectorizable is True else _divide_mp
     else: 
         if vectorizable: 
             f = func(np.atleast_2d(centre).T, *f_args)[0]
-            _divide_hrect = _divide_vec
         else: 
             f = func(centre, *f_args)
-            _divide_hrect = _divide_mp
             
         if printfile!='':
             with open(printfile+'-parents.csv', 'w', newline='') as csvfile:
                 writer(csvfile)
             with open(printfile+'-children.csv', 'w') as csvfile:
                 writer(csvfile)
-            with open(printfile+'-minima.csv', 'w') as csvfile:
+            with open(printfile+'-resolved.csv', 'w') as csvfile:
                 writer(csvfile)
             
         elite = hyperrectangle(centre, f, -1, 0, lb, ub, np.inf)
         parents = np.array([elite])
         archive, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
+    
+    _divide_hrect = _divide_vec if vectorizable is True else _divide_mp
     
     i, conv_count, miter_adj, mfev_adj = 0, 0, 0, 0
     fev = 1
@@ -349,7 +353,7 @@ def Direct(
 
         log_min_l = np.log10(resolution)
         total_vol = (ub-lb).prod()
-        landlocked_minima, edge_minima = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
+        landlocked_resolved, edge_resolved = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         # near_optimal_res = True
         conv_count = 0
         
@@ -371,35 +375,59 @@ def Direct(
     
             # all hrects which do not have any children  
             childless = np.concatenate((new_hrects, archive))
+            del new_hrects, archive #reduce memory load
     
-            # generate array of list-index, cost, and volume
-            fvs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
-            # Make sure we haven't lost search space
-            assert abs(1-sum(fvs[:, 2])/total_vol) < 1e-6, f'{sum(fvs[:, 2])} / {total_vol}' # tolerance for floating point 
-            
-            # sort list indices by cost
-            fvs = fvs[fvs[:,1].argsort(), :]
-            fs = fvs[:,0].astype(np.int64)
-            
-            if childless[fs[0]].f < elite.f: 
+            # generate array of list-index, cost
+            fvs = np.array([(j, h.f) for j, h in enumerate(childless)], dtype=np.float64)
+            gen_elite = childless[int(fvs[fvs[:,1].argmin(), 0])]
+            if gen_elite.f < elite.f: 
                 # optimal value may not be found in the youngest generation
-                elite = childless[fs[0]]
-
-            # near-optimal rectangles
-            nearoptimalmask = fvs[:, 1] <= near_optimal*elite.f
-            best = fs[nearoptimalmask] 
-            best = best[:min(population, len(best))]
-            
+                elite = gen_elite
+    
             # maximum resolution rectangles 
-            lm_i = np.array([j for j in fs if hrect_is_barren(childless[j], log_min_l)], dtype=np.int64)
-            total_vol -= sum([h.volume for h in childless[lm_i]])
+            resolved_mask = _semibarren_speedup(list(childless), np.ones(ndim, dtype=np.bool_), log_min_l)
+            total_vol -= sum([h.volume for h in childless[resolved_mask]])
             
-            llm_i = landlocked(childless, lm_i, 
-                                np.setdiff1d(np.arange(childless, dtype=np.int64), lm_i, assume_unique=True),
-                                True, (lb, ub))
+            
+            len_allresolved = resolved_mask.sum() + len(edge_resolved) + len(landlocked_resolved)
+            #choose which method to use based on approximate no. of comparisons required
+            if resolved_mask.sum() > 0:
+                if resolved_mask.sum()*len_allresolved < resolved_mask.sum()*((~resolved_mask).sum()):
+                    llresolved_mask = landlocked_bysum(
+                        list(childless[resolved_mask]),
+                        list(np.concatenate((childless[resolved_mask], 
+                                             landlocked_resolved, 
+                                             edge_resolved))),
+                        bounds)
+                    
+                else: 
+                    llresolved_mask = landlocked_bycontra(
+                        list(childless[resolved_mask]),
+                        list(childless[~resolved_mask]))
+            else: 
+                llresolved_mask = np.array([], dtype=np.bool_)
+            if len(edge_resolved)>0:
+                if len(edge_resolved)*len_allresolved < len(edge_resolved)*((~resolved_mask).sum()):
+                    lledge_mask = landlocked_bysum(
+                        list(edge_resolved),
+                        list(np.concatenate((childless[resolved_mask], 
+                                             landlocked_resolved, 
+                                             edge_resolved))),
+                        bounds)
+                else: 
+                    lledge_mask = landlocked_bycontra(
+                        list(edge_resolved),
+                        list(childless[~resolved_mask]))
+            else: 
+                lledge_mask = np.array([], dtype=np.bool_)
+            landlocked_resolved = np.concatenate((landlocked_resolved,
+                                                  edge_resolved[lledge_mask],
+                                                  childless[resolved_mask][llresolved_mask]))
+            
+            edge_resolved = np.concatenate((edge_resolved[~lledge_mask], 
+                                            childless[resolved_mask][~llresolved_mask]))
 
-            landlocked_minima = np.concatenate(landlocked_minima, childless[llm_i])
-            edge_minima = np.concatenate(edge_minima, childless[np.setdiff1d(lm_i, landlocked_minima)])
+            childless = childless[~resolved_mask]
 
             if printfile != '':
                 print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
@@ -415,16 +443,30 @@ def Direct(
                                                    np.array([h.centre for h in childless])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
-                with open(printfile+'-minima.csv', 'w', newline='') as csvfile:
-                    minima = np.concatenate((landlocked_minima, edge_minima))
+                with open(printfile+'-resolved.csv', 'w', newline='') as csvfile:
+                    minima = np.concatenate((landlocked_resolved, edge_resolved))
                     if len(minima) > 0:
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in minima]), 
                                                    np.array([h.centre for h in minima])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
             print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*50}', end='\r', flush=True)
+            
+            # generate array of list-index, cost, and volume
+            fvs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
+            # Make sure we haven't lost search space
+            assert abs(1-sum(fvs[:, 2])/total_vol) < 1e-6, f'{sum(fvs[:, 2])} / {total_vol}' # tolerance for floating point 
+            
+            # sort list indices by cost
+            fvs = fvs[fvs[:,1].argsort(), :]
+            fs = fvs[:,0].astype(np.int64)
+
+            # near-optimal rectangles
+            nearoptimalmask = fvs[:, 1] <= near_optimal*elite.f
+            best = fs[nearoptimalmask] 
 
             if locally_biased is True:
+                best = best[:min(population, len(best))]
                 # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
                 prev_bests = childless[best]
                 new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
@@ -450,63 +492,67 @@ def Direct(
                 dims += rect_dim 
                 dims %= ndim
                 
-                best = fs[nearoptimalmask]
-                new_accepted = np.array([], dtype=np.int64)
                 if len(best)>0:
                     # list indices of best rectangles which are semibarren
-                    best_semibarr = _semibarren_speedup(list(childless[best]), dims, log_min_l)
+                    best_semibarr = best[_semibarren_speedup(list(childless[best]), dims, log_min_l)]
                     
                     best = np.setdiff1d(best, best[best_semibarr], assume_unique=True)
                     best = best[:min(len(best), population)]
                 
-                    new_accepted = best.copy()
-                    
                 # get list-indices of childless hrects which are not to be split
-                to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
-                
-                # remove local minima
-                to_arch = np.setdiff1d(to_arch, lm_i, assume_unique=True)
+                new_accepted = np.zeros(len(childless), dtype=np.bool_)
+                new_accepted[best] = True
 
-            if len(new_accepted) == 0: 
+            if new_accepted.sum() == 0: 
                 conv_count+=1
             else: 
                 conv_count=0
 
-            if len(new_accepted) == 0 and conv_count >= conv_max:
-                new_accepted=np.array([], dtype=np.int64)
+            if new_accepted.sum() == 0 and conv_count >= conv_max:
                 near_optimal_threshold = elite.f*near_optimal
-                near_optimal_minima = np.array([h for h in edge_minima if h.f < near_optimal_threshold])
-                eligible = np.setdiff1d(np.arange(len(childless), dtype=np.int64),
-                                        lm_i, 
-                                        assume_unique=True)
-                eligible = np.setdiff1d(eligible, 
-                                        eligible[_borderheuristic(list(childless[eligible]), list(near_optimal_minima))],
-                                        assume_unique=True)
-                eligible = np.setdiff1d(eligible, _semibarren_speedup(list(childless[eligible]), dims, log_min_l), assume_unique=True)
-                
-                print(f'it {i} - #hrects: {len(parents)}. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
-                if len(eligible) <= cpu_count()*14 or len(eligible)*len(near_optimal_minima) >= 10e10:
-                    print('< a few minutes. ', end ='', flush=True)
-                    new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible)
-                else: 
-                    time_test_range = cpu_count()*7
-                    sort_start = dt.datetime.now()
-                    new_accepted = sortrectangles(list(near_optimal_minima), list(childless), eligible[:time_test_range])
-                    sort_time = (len(eligible) - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
-                    print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
-                    new_accepted = np.concatenate((new_accepted, 
-                                                   sortrectangles(list(near_optimal_minima), list(childless), eligible[time_test_range:])))
-                print('Done.', end ='\r', flush=True)
-                print(' '*150, end='\r', flush=True)
+                near_optimal_resolved = np.array([h.f < near_optimal_threshold for h in edge_resolved])
 
-                to_arch = np.setdiff1d(np.arange(len(childless), dtype=np.int64), new_accepted, assume_unique=True)
-                to_arch = np.setdiff1d(to_arch, lm_i, assume_unique=True)
-            if len(new_accepted) != 0:
+                if near_optimal_resolved.sum()>0:
+                    eligible = np.ones(len(childless), dtype=np.bool_)
+                    eligible[_semibarren_speedup(list(childless[eligible]), dims, log_min_l)] = False
+                    if eligible.sum() > 0:
+                        eligible[_borderheuristic(list(childless[eligible]), 
+                                                  list(edge_resolved[near_optimal_resolved]))] = False
+                    
+                    print(f'it {i} - #hrects: {len(parents)}. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
+                    if eligible.sum() <= cpu_count()*14 or eligible.sum()*near_optimal_resolved.sum() >= 10e10:
+                        print('< a few minutes. ', end ='', flush=True)
+                        new_accepted = sortrectangles(list(edge_resolved[near_optimal_resolved]), 
+                                                      list(childless[eligible]))
+                    else: 
+                        time_test_range = cpu_count()*7
+                        
+                        timer_mask = np.zeros(len(eligible), dtype=np.bool_)
+                        timer_mask[:_find_bool_indx(eligible, time_test_range)+1] = True
+                        
+                        sort_start = dt.datetime.now()
+                        new_accepted = sortrectangles(list(edge_resolved[near_optimal_resolved]), 
+                                                      list(childless[eligible*timer_mask]))
+                        sort_time = (eligible.sum() - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
+                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
+                        new_accepted = np.concatenate((new_accepted, 
+                            sortrectangles(list(edge_resolved[near_optimal_resolved]), 
+                                            list(childless[eligible*~timer_mask]))))
+
+                    print('Done.', end ='\r', flush=True)
+                    print(' '*150, end='\r', flush=True)
+                    
+                    eligible[eligible == True] = new_accepted
+                    new_accepted=eligible
+                else: 
+                    new_accepted = np.zeros(len(childless), dtype=np.bool_)
+
+            if new_accepted.sum() > 0:
                 conv_count=0
 
-            if len(new_accepted) > MAXPARENTS: # prevents memory error
-                to_arch = np.concatenate((to_arch, new_accepted[MAXPARENTS:]))
-                new_accepted = new_accepted[:MAXPARENTS]
+            if new_accepted.sum() > MAXPARENTS: # prevents memory error
+                _maxindx = _find_bool_indx(new_accepted, MAXPARENTS)
+                new_accepted = new_accepted[_maxindx+1:] = False
 
             it_time = dt.datetime.now() - it_start
             if disp is True: 
@@ -515,15 +561,15 @@ def Direct(
                 callback(elite)
 
             # update archive
-            archive = childless[to_arch]
+            archive = childless[~new_accepted]
             # old parents are forgotten
             parents = childless[new_accepted]
             
             i+=1
-        archive = np.concatenate((archive, landlocked_minima, edge_minima))
+        archive = np.concatenate((archive, landlocked_resolved, edge_resolved))
         if printfile != '':
             print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
-            with open(printfile+'-minima.csv', 'w') as csvfile:
+            with open(printfile+'-resolved.csv', 'w') as csvfile:
                 writer(csvfile)
             with open(printfile+'-children.csv', 'w', newline='') as csvfile:
                 if len(archive) > 0:
@@ -541,60 +587,68 @@ def Direct(
     return DirectResult(elite.centre, elite.f, fev, i, 
                           elite.lb, elite.ub, elite.volume, elite.volume/total_vol)                  
 
+@njit
+def _find_bool_indx(mask, count):
+    """returns the index of the boolean mask such that there are {count} Trues 
+    before it"""
+    _mask_indx, _counter = -1, 0
+    while _counter < count:
+        _mask_indx+=1
+        if mask[_mask_indx]:
+            _counter += 1
+    return _mask_indx
+
 @njit 
-def _borderbysum(h, archive, secondpool, bounds):
-    """ Returns True if h is landlocked by secondpool """
+def _sub_landlocked_bysum(h, pool, bounds):
+    """ Returns True if h is landlocked by pool """
     """ Assumes h is of the smallest resolution in archive """
-    lb, ub = bounds
-    faces = h.ndim*2 - (h.ub == ub).sum() - (h.lb == lb).sum()
-    for j in secondpool:
-        h2 = archive[j]
+    faces = h.ndim*2 - (h.lb == bounds[0]).sum() - (h.ub == bounds[1]).sum()
+    for h2 in pool:
         if hrects_border(h, h2):
             faces -= 1 
         if faces == 0:
             return True
     return False
+            
+@njit(parallel=True)
+def landlocked_bysum(eligible, resolved, bounds):
+    accepted = np.empty(len(eligible), dtype=np.bool_)
+    for i in prange(len(eligible)):
+        accepted[i] = _sub_landlocked_bysum(eligible[i], resolved, bounds)
+    return accepted 
 
-@njit
-def _islandborder(h, archive, secondpool):
-    """ Returns True if h is islanded from secondpool """
-    for j in secondpool:
-        h2 = archive[j]
+@njit 
+def _sub_landlocked_bycontra(h, antipool):
+    """ Returns True if h is landlocked by pool """
+    for h2 in antipool: 
         if hrects_border(h, h2):
             return False
     return True
 
 @njit(parallel=True)
-def landlocked(archive, pool, antipool, highest_res=False, bounds=None):
-    accepted = np.empty(len(pool), dtype=np.bool_)
-    if len(pool) >= len(antipool) or not highest_res:
-        for i in prange(len(pool)):
-            accepted[i] = _islandborder(archive[pool[i]], archive, antipool)
-    else: # if len(pool) > len(antipool) and highest_res:
-        for i in prange(len(pool)):
-            accepted[i] = _borderbysum(archive[pool[i]], archive, pool, bounds)
-    return pool[accepted]
-        
-
+def landlocked_bycontra(eligible, unresolved):
+    accepted = np.empty(len(eligible), dtype=np.bool_)
+    for i in prange(len(eligible)):
+        accepted[i] = _sub_landlocked_bycontra(eligible[i], unresolved)
+    return accepted
 
 @njit(parallel=True)
 def _semibarren_speedup(rects, dims, log_min_l):
     accepted = np.empty(len(rects), dtype=np.bool_)
     for i in prange(len(rects)):
         accepted[i] = hrect_is_semibarren(rects[i], dims, log_min_l)
-    return np.arange(len(rects), dtype=np.int64)[accepted]
+    return accepted
 
 @njit(parallel=True)
-def sortrectangles(minima, archive, eligible):
+def sortrectangles(resolved, eligible):
     accepted=np.zeros(len(eligible), dtype=np.bool_)
-                                              
     for i in prange(len(eligible)):
-        for m in minima:
-            if hrects_border(archive[eligible[i]], m):
+        h = eligible[i]
+        for r in resolved:
+            if hrects_border(h, r):
                 accepted[i] = True
                 break
-
-    return eligible[accepted]
+    return accepted
 
 
 @njit(parallel=True)
@@ -610,7 +664,7 @@ def _borderheuristic(rects, best):
     for i in prange(len(rects)):
         accepted[i] = ((rects[i].lb >= maxub).sum() + (rects[i].ub <= minlb).sum() > 1)
 
-    return np.arange(len(rects), dtype=np.int64)[accepted]
+    return accepted
     
 @njit
 def _normalise(arr, lb, ub):
@@ -640,9 +694,10 @@ def _restart(restart, bounds, disp):
     print('Restarting optimisation where',restart,'left off.')
     history = np.genfromtxt(restart+'-children.csv', delimiter=',', dtype=np.float64)
     try: 
-        minima = np.genfromtxt(restart+'-minima.csv', delimiter=',', dtype=np.float64)
-        if len(minima) != 0:
-            history = np.vstack((history, np.atleast_2d(minima)))
+        resolved = np.genfromtxt(restart+'-resolved.csv', delimiter=',', dtype=np.float64)
+        if len(resolved) != 0:
+            history = np.vstack((history, np.atleast_2d(resolved)))
+        del resolved
     except FileNotFoundError:
         pass
     try: 
@@ -662,7 +717,7 @@ def _restart(restart, bounds, disp):
         fps, xps = parents[:,:3], parents[:,3:]
         xps, lbps, ubps = _reconstruct_from_centre(np.atleast_2d(xps[pminidx, :]), bounds)
         elite = hyperrectangle(xps[0,:], *fps[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
-        del fps, xps, lbps, ubps
+        del fps, xps, lbps, ubps, parents
 
     archive = np.array([hyperrectangle(xs[i], *fs[i,:], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
     

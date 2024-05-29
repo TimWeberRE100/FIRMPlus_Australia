@@ -180,7 +180,7 @@ def _generate_centres(hrect, indcs, dims):
 @njit
 def _divide_vec(func, hrect, dims, f_args, log_min_l):
     # do not split along resolution axes
-    dims = dims[hrect.length_inds >= log_min_l]
+    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
     l_dim=len(dims)
     if l_dim == 0:
         # do not lose hrect - may be splittable along different axis
@@ -203,7 +203,7 @@ def _divide_vec(func, hrect, dims, f_args, log_min_l):
 @njit(parallel=True)
 def _divide_mp(func, hrect, dims, f_args, log_min_l):
     # do not split along resolution axes
-    dims = dims[hrect.length_inds >= log_min_l]
+    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
     l_dim=len(dims)
     if l_dim == 0:
         # do not lose hrect 
@@ -330,7 +330,6 @@ def Direct(
         archive, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
     
     _divide_hrect = _divide_vec if vectorizable is True else _divide_mp
-    
     i, conv_count, miter_adj, mfev_adj = 0, 0, 0, 0
     fev = 1
     
@@ -370,7 +369,8 @@ def Direct(
             new_hrects = np.array([hrect for parent in 
                                    tqdm(parents, desc=f'it {i} - #hrects: {len(parents)}. Evaluating Rectangles', leave=False)
                                    for hrect in _divide_hrect(func, parent, dims, f_args, log_min_l)])
-            print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles', end='\r', flush=True)
+            print(' ', end='\r', flush=True)
+            print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles...', end='\r', flush=True)
             fev += len(new_hrects)
     
             # all hrects which do not have any children  
@@ -430,6 +430,7 @@ def Direct(
             childless = childless[~resolved_mask]
 
             if printfile != '':
+                print(' ', end='\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
                 with open(printfile+'-parents.csv', 'a', newline='') as csvfile:
                     if len(parents) > 0:
@@ -444,13 +445,16 @@ def Direct(
                                                    axis=1)
                         writer(csvfile).writerows(printout)
                 with open(printfile+'-resolved.csv', 'w', newline='') as csvfile:
-                    minima = np.concatenate((landlocked_resolved, edge_resolved))
-                    if len(minima) > 0:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in minima]), 
-                                                   np.array([h.centre for h in minima])), 
+                    resolved = np.concatenate((landlocked_resolved, edge_resolved))
+                    if len(resolved) > 0:
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in resolved]), 
+                                                   np.array([h.centre for h in resolved])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
-            print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*50}', end='\r', flush=True)
+                        del resolved
+                del printout
+                print(' ', end = '\r', flush=True)
+                print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*20}', end='\r', flush=True)
             
             # generate array of list-index, cost, and volume
             fvs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
@@ -518,7 +522,7 @@ def Direct(
                     if eligible.sum() > 0:
                         eligible[_borderheuristic(list(childless[eligible]), 
                                                   list(edge_resolved[near_optimal_resolved]))] = False
-                    
+                    print(' ', end = '\r', flush=True)
                     print(f'it {i} - #hrects: {len(parents)}. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
                     if eligible.sum() <= cpu_count()*14 or eligible.sum()*near_optimal_resolved.sum() >= 10e10:
                         print('< a few minutes. ', end ='', flush=True)
@@ -556,6 +560,7 @@ def Direct(
 
             it_time = dt.datetime.now() - it_start
             if disp is True: 
+                print(' ', end='\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Took: {it_time}. Best value: {elite.f}.', flush=True)
             if callback is not None:
                 callback(elite)
@@ -581,7 +586,7 @@ def Direct(
         
         miter_adj += i
         mfev_adj += fev
-        print('-'*50, '\nprogram step\n', '-'*50, flush=True)
+        print(f'{"-"*50}\nprogram step\n{"-"*50}', flush=True)
 
     print('\n')
     return DirectResult(elite.centre, elite.f, fev, i, 

@@ -592,7 +592,7 @@ def Direct(
                     # list indices of best rectangles which are semibarren
                     best_semibarr = best[_semibarren_speedup(list(childless[best]), dims, log_min_l)]
                     
-                    best = np.setdiff1d(best, best[best_semibarr], assume_unique=True)
+                    best = np.setdiff1d(best, best_semibarr, assume_unique=True)
                     best = best[:min(len(best), population)]
                 
                 # get list-indices of childless hrects which are not to be split

@@ -43,7 +43,7 @@ def Reliability(solution, flexible, start=None, end=None):
     Discharge = np.zeros(shape2d, dtype=np.float64)
     Charge = np.zeros(shape2d, dtype=np.float64)
     Storage = np.zeros(shape2d, dtype=np.float64)
-    Surplus = np.zeros(shape2d, dtype=np.float64)
+    # Surplus = np.zeros(shape2d, dtype=np.float64)
     Deficit = np.zeros(shape2d, dtype=np.float64)
     Import = np.zeros(shape2d, dtype=np.float64)
     Export = np.zeros(shape2d, dtype=np.float64)
@@ -87,7 +87,8 @@ def Reliability(solution, flexible, start=None, end=None):
             Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
 
         # =============================================================================
-        # To Do: If deficit Go back in time and redispatch discharge
+        # To Do: If deficit Go back in time and discharge batteries 
+        # This may make the time a fair bit longer
         # =============================================================================
 
         if Surplust.sum() > 1e-6:
@@ -124,7 +125,6 @@ def Reliability(solution, flexible, start=None, end=None):
     solution.Import = Import
     solution.Export = Export
     solution.TDC = TDC
-    
     
     return Deficit
 
@@ -355,8 +355,8 @@ def hvdc_leg4(q_net, q_h, p_net, p_h, o_net, o_h, leg4_net, leg4_h, n, fill_req,
                                     Surplust[leg4_net], 
                                     DischargeSurplust[leg4_net]), #surplus 
                                 fill_req[n]), # energy need
-                            Hcapacity[leg4_h] - np.atleast_2d(Exportt[leg4_h, :]).sum(axis=1)),  #transmission leg 1
-                        Hcapacity[q_h] - np.atleast_2d(Exportt[q_h, :]).sum(axis=1)), #transmission leg 2
+                            Hcapacity[leg4_h] - np.atleast_2d(Exportt[leg4_h, :]).sum(axis=1)),#transmission leg 1
+                        Hcapacity[q_h] - np.atleast_2d(Exportt[q_h, :]).sum(axis=1)),#transmission leg 2
                     Hcapacity[p_h] - np.atleast_2d(Exportt[p_h, :]).sum(axis=1)),#transmission leg 3
                 Hcapacity[o_h] - np.atleast_2d(Exportt[o_h, :]).sum(axis=1)),#transmission leg 4
             0) 

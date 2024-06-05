@@ -62,6 +62,8 @@ if scenario<=17:
     Nodel_int, PVl_int, Windl_int = [x[x==n_node[node]] for x in (Nodel_int, PVl_int, Windl_int)]
     Nodel, PVl, Windl = [x[x==node] for x in (Nodel, PVl, Windl)]
     network = np.empty((0,0), dtype=np.int64)
+    network_mask = np.zeros(7, dtype=np.bool_)
+    conn = np.empty((0,0), dtype=np.int64) 
 
 elif scenario>=21:
     coverage = [np.array(['NSW', 'QLD', 'SA', 'TAS', 'VIC']),
@@ -274,6 +276,6 @@ class Solution:
 
 if __name__=='__main__':
     x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
-    solution = Solution(x/1.25) 
+    solution = Solution(x)#/1.25) 
     solution._evaluate()
     print(solution.Lcoe, solution.Penalties)

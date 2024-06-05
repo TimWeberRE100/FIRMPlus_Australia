@@ -4,131 +4,40 @@
 # Correspondence: bin.lu@anu.edu.au
 
 import datetime as dt
-import csv
+from numba import jit, float64, cuda, guvectorize
 import numpy as np
-from multiprocessing import cpu_count, Pool
-from scipy.optimize import differential_evolution
+from argparse import ArgumentParser
+
+parser = ArgumentParser()
+parser.add_argument('-i', default=1000, type=int, required=False, help='maxiter=4000, 400')
+parser.add_argument('-p', default=100, type=int, required=False, help='popsize=2, 10')
+parser.add_argument('-m', default=0.5, type=float, required=False, help='mutation=0.5')
+parser.add_argument('-r', default=0.3, type=float, required=False, help='recombination=0.3')
+parser.add_argument('-s', default=11, type=int, required=False, help='11, 12, 13, ...')
+parser.add_argument('-n', default='Super1', type=str, required=False, help='node=Super1')
+args = parser.parse_args()
+
+scenario = args.s
+node = args.n
 
 from Input import *
 
-def Vobjective(x):
-    """Vectorised Objective Function"""
-    S = VSolution(x)
-    S._evaluate()
-    return S.Lcoe + S.Penalties
 
-def Vobj_wrapper(x, callback, ind_pairs):
-    arrs = [x[:, i: j] for i, j in ind_pairs]
-    results = np.concatenate([Vobjective(arr) for arr in arrs])
-
-    if callback is True:
-        # with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
-        #     printout = np.concatenate((results.reshape(-1, 1), x.T), axis = 1)
-        #     writer = csv.writer(csvfile)
-        #     writer.writerows(printout)
-        csvfile = open('Results/History{}.csv'.format(scenario), 'a', newline='')
-        printout = np.concatenate((results.reshape(-1, 1), x.T), axis = 1)
-        csv.writer(csvfile).writerows(printout)
-        csvfile.close()
-    return results
-
-def Objective(x):
-    """This is the objective function"""
+@jit(float64(float64[:]))
+def Obj(x):
     S = Solution(x)
     S._evaluate()
-    return S.Lcoe + S.Penalties
+    result = S.Lcoe + S.Penalties
+    return result
 
-def Vobj_mpwrapper(x, callback, ind_pairs, processes):
-    arrs = [x[:, i: j] for i, j in ind_pairs]
-    with Pool(processes=processes) as processPool:
-        results = processPool.map(Vobjective, arrs)
-        results = np.concatenate(results)
+@guvectorize([(float64[:,:], float64[:])], '(m, n)->(m)')
+def parallel_objs(x, result):
+    for i in range(x.shape[0]):
+        result[i] = Obj(x[i])
     
-    if callback is True:
-        with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
-            printout = np.concatenate((results.reshape(-1, 1), x.T), axis = 1)
-            writer = csv.writer(csvfile)
-            writer.writerows(printout)
-    return results
-
-def Callback_1(xk, convergence=None):
-    with open('Results/History{}.csv'.format(scenario), 'a', newline='') as csvfile:
-        csv.writer(csvfile).writerow([Objective(xk)] + list(xk))
-        
-def Init_callback():
-    with open('Results/History{}.csv'.format(scenario), 'w', newline='') as csvfile:
-        csv.writer(csvfile)
-
-def Optimise():
-    if args.cb > 1: 
-        Init_callback()
-
-    if args.vec == 1: 
-        npop = args.p * len(lb)
-        processes = cpu_count() if args.w == -1 else cpu_count()//2 if args.w ==-2 else args.w
-        processes = min(npop, processes)
-        
-        if processes == 1:
-            func = Vobj_wrapper
-        elif processes > 1:
-            func = Vobj_mpwrapper
-            
-        vsize = npop//processes + 1 if npop%processes != 0 else npop//processes
-        vsize = min(vsize, args.vp, npop)
-        range_gen = range(npop//vsize + 1) if npop%vsize != 0 else range(npop//vsize)
-        ind_pairs = [(n*vsize, min((n+1)*vsize, npop)) for n in range_gen]
-        
-        if processes == 1:
-            func_args = (args.cb==2, ind_pairs)
-        elif processes > 1:
-            func_args = (args.cb==2, ind_pairs, processes)
-        
-    elif args.vec == 0:
-        vsize=1
-        func = Objective
-        func_args = ()
-        
-    starttime = dt.datetime.now()
-    print("Optimisation starts at", starttime)
-    result = differential_evolution(
-        func=func, 
-        args=func_args,
-        bounds=list(zip(lb, ub)), 
-        tol=0,
-        maxiter=args.i, 
-        popsize=args.p, 
-        mutation=args.m, 
-        recombination=args.r,
-        disp=bool(args.ver), 
-        polish=False, 
-        updating='deferred', 
-        vectorized=bool(args.vec),
-        callback=Callback_1 if args.cb == 1 else None,
-        workers=args.w if args.vec == 0 else 1, #vectorisation overrides mp
-        )
-    
-    endtime = dt.datetime.now()
-    timetaken = endtime-starttime
-    print("Optimisation took", timetaken)
-
-    return result, timetaken
-
-if __name__=='__main__':
-
-
-    
-    #TODO 
-    # make vsize smaller if no. slices is only a few larger than no. processes
-    # this will reduce load on each process and avoid waiting for just one extra process 
-    
-    result, time = Optimise()
-    
-    with open('Results/Optimisation_resultx{}.csv'.format(scenario), 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(result.x)
-    
-    
-    # from Dispatch import Analysis
-    # Analysis(result.x)
-
-
+#%%
+nvec = 5
+input_vector = (np.random.rand(nvec, len(lb))*(ub-lb)+lb)
+# result = np.empty(nvec, dtype=np.float64)
+input_vector.shape
+result = parallel_objs(input_vector)

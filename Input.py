@@ -353,20 +353,9 @@ class Solution:
 
         self.CPV = x[: pidx]  # CPV(i), GW
         self.CWind = x[pidx: widx]  # CWind(i), GW
-        
-        # Manually replicating np.tile functionality for CPV and CWind
-        CPV_tiled = np.zeros((intervals, len(self.CPV)))
-        CWind_tiled = np.zeros((intervals, len(self.CWind)))
-        # CInter_tiled = np.zeros((intervals, len(self.CWind)))
-        for i in range(intervals):
-            for j in range(len(self.CPV)):
-                CPV_tiled[i, j] = self.CPV[j]
-            for j in range(len(self.CWind)):
-                CWind_tiled[i, j] = self.CWind[j]
 
-        self.GPV = TSPV * CPV_tiled * 1000.  # GPV(i, t), GW to MW
-        self.GWind = TSWind * CWind_tiled * 1000.  # GWind(i, t), GW to MW
-
+        self.GPV = TSPV * np.ones((intervals, len(self.CPV))) * self.CPV * 1000.  # GPV(i, t), GW to MW
+        self.GWind = TSWind * np.ones((intervals, len(self.CWind))) * self.CWind * 1000.  # GWind(i, t), GW to MW
 
         self.CPHP = x[widx: sidx]  # CPHP(j), GW
         self.CPHS = x[sidx]  # S-CPHS(j), GWh
@@ -374,7 +363,6 @@ class Solution:
 
         self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
         
-
         self.GBaseload = GBaseload
         self.CPeak = CPeak
         self.CHydro = CHydro
@@ -389,3 +377,10 @@ class Solution:
     #     """S = Solution(list(np.ones(64))) >> print(S)"""
     #     return 'Solution({})'.format(self.x)
 
+if __name__=='__main__':
+    x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
+    solution = Solution(x)#/1.25) 
+    solution._evaluate()
+    print(solution.Lcoe, solution.Penalties)
+    
+        

@@ -207,6 +207,13 @@ def Information(x, flexible):
     return True
 
 if __name__ == '__main__':
-    capacities = np.genfromtxt('Results/Optimisation_resultx17.csv', delimiter=',')
-    flexible = np.genfromtxt('Results/Dispatch_Flexible17.csv', delimiter=',', skip_header=1)
-    Information(capacities, flexible)
+    # capacities = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',')
+    # flexible = np.genfromtxt('Results/Dispatch_Flexible{}.csv'.format(scenario), delimiter=',', skip_header=1)
+    capacities=np.array([0.78125,0.78125,0.78125,0.78125,0.78125,2.34375,0.78125,
+                         0.78125,2.34375,0.78125,2.34375,0.78125,2.34375,2.34375,
+                         2.34375,0.78125,0.78125,0.78125,1.5625,1.5625,1.5625,1.5625,
+                         1.5625,4.6875,1.5625,4.6875,1.5625,1.5625,1.5625,1.5625,1.5625,
+                         1.5625,1.5625,1.5625,1.5625,1.5625,1.5625,1.5625,4.6875,1.5625,
+                         1.5625,1.5625,4.999287150973348,3.9837339973767265,
+                         2.3005982340601734,1.9956554787796343,6.920525089860547,218.75])
+    Information(capacities, CPeak.sum()*1000*np.ones(intervals))

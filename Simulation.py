@@ -4,7 +4,8 @@
 # Correspondence: bin.lu@anu.edu.au
 
 import numpy as np
-from numba import njit
+from numba import njit, jit
+from numba import cuda, guvectorize, vectorize
 
 @njit()
 def Reliability(solution, flexible, start=None, end=None):
@@ -54,6 +55,28 @@ def Reliability(solution, flexible, start=None, end=None):
 
     return Deficit
 
+
+@guvectorize(['void(float64[:], float64, float64, float64, float64, float64[:,:], float64[:,:])'],
+        '(m),(),(),(),(),(m,n)->(m,n)',
+           target='cuda'
+           )
+def _simulate(Netload, Pcapacity, Scapacity, resolution, efficiency, shape, Charging):
+    Charging[-1, 2] = 0.5 * Scapacity
+    for t in range(len(Netload)):
+        Storaget_1 = Charging[t-1, 2]
+
+        Charging[t, 0] = np.minimum(np.minimum(np.maximum(0.0, Netload[t]), Pcapacity), Storaget_1 / resolution)
+        Charging[t, 1] = np.minimum(np.minimum(-1 * np.minimum(0.0, Netload[t]), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
+        Charging[t, 2] = Storaget_1 - Charging[t, 0] * resolution + Charging[t, 1] * resolution * efficiency
+
+"""
+
+
+https://numba.discourse.group/t/using-guvectorize-inside-a-jitted-function/1966/9 
+
+
+"""
+
 @njit()
 def VReliability(solution, flexible):
     """Vectorised version of Reliability"""
@@ -74,22 +97,16 @@ def VReliability(solution, flexible):
     Charge = np.zeros(shape2d)
     Storage = np.zeros(shape2d)
 
-    zero = np.zeros(1, dtype=np.float64)
+    Charging = np.empty((intervals, nvec, 3), np.float64)
+    _charging = np.empty((intervals, nvec, 3), np.float64)
 
-    for t in range(intervals):
-        Netloadt = Netload[t]
-        Storaget_1 = Storage[t-1] if t>0 else 0.5 * Scapacity
+    Charging = _simulate(Netload, Pcapacity, Scapacity, resolution, efficiency, _charging, Charging
+    )
+    
+    Discharge, Charge, Storage = Charging[:, :, 0], Charging[:, :, 1], Charging[:, :, 2]
 
-        Discharget = np.minimum(np.minimum(np.maximum(zero, Netloadt), Pcapacity), Storaget_1 / resolution)
-        Charget = np.minimum(np.minimum(-1 * np.minimum(zero, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-        Storaget = Storaget_1 - Discharget * resolution + Charget * resolution * efficiency
-
-        Discharge[t] = Discharget
-        Charge[t] = Charget
-        Storage[t] = Storaget
-
-    Deficit = np.maximum(Netload - Discharge, zero)
-    Spillage = -1 * np.minimum(Netload + Charge, zero)
+    Deficit = np.maximum(Netload - Discharge, 0.0)
+    Spillage = -1 * np.minimum(Netload + Charge, 0.0)
 
     solution.flexible = flexible
     solution.Spillage = Spillage

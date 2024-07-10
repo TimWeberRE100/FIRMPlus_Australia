@@ -14,11 +14,11 @@ parser.add_argument('-p', default=100, type=int, required=False, help='popsize=2
 parser.add_argument('-m', default=0.5, type=float, required=False, help='mutation=0.5')
 parser.add_argument('-r', default=0.3, type=float, required=False, help='recombination=0.3')
 parser.add_argument('-s', default=11, type=int, required=False, help='11, 12, 13, ...')
-parser.add_argument('-n', default='Super1', type=str, required=False, help='node=Super1')
+
 args = parser.parse_args()
 
 scenario = args.s
-node = args.n
+
 
 from Input import *
 
@@ -30,14 +30,23 @@ def Obj(x):
     result = S.Lcoe + S.Penalties
     return result
 
-@guvectorize([(float64[:,:], float64[:])], '(m, n)->(m)')
+@guvectorize([(float64[:,:], float64[:])], '(m, n)->(m)', target='parallel')
 def parallel_objs(x, result):
     for i in range(x.shape[0]):
         result[i] = Obj(x[i])
     
 #%%
-nvec = 5
-input_vector = (np.random.rand(nvec, len(lb))*(ub-lb)+lb)
-# result = np.empty(nvec, dtype=np.float64)
-input_vector.shape
-result = parallel_objs(input_vector)
+nvec = 12
+input_vector = (np.random.rand(nvec, len(lb))*(ub-lb)+lb).T
+
+# # result = np.empty(nvec, dtype=np.float64)
+# input_vector.shape
+# result = parallel_objs(input_vector)
+# print(result)
+
+S = VSolution(input_vector)
+
+from Simulation import VReliability 
+
+D = VReliability(S, flexible = np.ones(intervals)*CPeak.sum()*1000)
+print(D.shape)

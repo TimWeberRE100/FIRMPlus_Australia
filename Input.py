@@ -14,13 +14,15 @@ parser.add_argument('-i', default=1000, type=int, required=False, help='maxiter=
 parser.add_argument('-p', default=100, type=int, required=False, help='popsize=2, 10')
 parser.add_argument('-m', default=0.5, type=float, required=False, help='mutation=0.5')
 parser.add_argument('-r', default=0.3, type=float, required=False, help='recombination=0.3')
+
 parser.add_argument('-s', default=21, type=int, required=False, help='11, 12, 13, ...')
+
 parser.add_argument('-cb', default=0, type=int, required=False, help='Callback: 0-None, 1-generation elites, 2-everything')
 parser.add_argument('-ver', default=1, type=int, required=False, help='Boolean - print progress to console')
 parser.add_argument('-vp', default=50, type=int, required=False, help='Maximum number of vectors to send to objective')
 parser.add_argument('-w', default=1, type=int, required=False, help='Maximum number of cores to parallelise over')
 parser.add_argument('-vec', default=1, type=int, required=False, help='Boolean - vectorised mode')
-parser.add_argument('-x', default=1, type=int)
+parser.add_argument('-resume', default=0, type=int, required=False, help='Boolean - whether to restart')
 
 args = parser.parse_args()
 assert args.w > 0 or args.w in (-1, -2)

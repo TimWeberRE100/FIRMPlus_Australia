@@ -14,10 +14,15 @@ from matplotlib.colors import Normalize
 os.chdir('\\'.join(os.getcwd().split('\\')[:-1]))
 from Input import scenario, lb, ub, pzones, wzones, nodes, pidx, widx, sidx
 
-costConstraint=1.05
+costConstraint=1.10
 
 file =fr"Results\History{scenario}-children.csv"
 data = pd.read_csv(file, header=None)
+
+# f2 =fr"Results\History{scenario}-resolved.csv"
+# data2 = pd.read_csv(f2, header=None)
+# data = pd.concat((data, data2))
+
 os.chdir('graphs')
 
 #%%
@@ -27,6 +32,7 @@ data.columns = ['cost', 'generation', 'cuts']+varCols
 mincost = data['cost'].min()
 resolved = data['cuts'].max()
 
+fulldata = data.copy()
 data = data.loc[data['cuts'] == resolved,:]
 
 data = data.drop(columns=['generation', 'cuts'])
@@ -41,8 +47,36 @@ data['s/w'] = data['solar']/data['wind']
 data['gen'] = data['solar'] + data['wind']
 data['phhrs'] = data['phs']/data['php']
 
-#%%
 data = data.round(4)
+
+#%%
+
+# def costmap(data, x, y, val, colormap='rocket', reverse_color=False, ax=None, 
+#             fig=None, x_bins='max', y_bins='max'):
+#     ax = plt.gca() if ax is None else ax
+#     fig = plt.gcf() if fig is None else fig
+    
+#     colormap = colormap+'_r' if reverse_color else colormap
+
+#     xmin, xmax = data[x].min(), data[x].max()
+#     ymin, ymax = data[y].min(), data[y].max()
+    
+#     x_bins = data[x].nunique() if x_bins=='max' else x_bins
+#     y_bins = data[y].nunique() if y_bins=='max' else y_bins
+    
+#     Z = data.reset_index().pivot(index=y, columns=x, values=val).to_numpy()
+    
+#     X, Y = np.meshgrid(
+#         np.linspace(xmin, xmax, x_bins),
+#         np.linspace(ymin, ymax, y_bins))
+    
+#     c = ax.pcolormesh(X, Y, np.ma.masked_invalid(Z), cmap=colormap)
+#     fig.colorbar(c, ax=ax)
+#     ax.set_xlabel(x)
+#     ax.set_ylabel(y)
+#     ax.set_title(f"{val} by {x} and {y}")
+
+#%%
 
 def aggregate_data(data, x, y, val, agg):
     if agg == 'min': 
@@ -73,8 +107,7 @@ def continuous_heatmap(data, x, y, val, agg='min', colormap='rocket', reverse_co
 
     data = aggregate_data(data, x, y, val, agg)
     
-    Z = data.reset_index()\
-        .pivot(index=y, columns=x, values=val).to_numpy()
+    Z = data.reset_index().pivot(index=y, columns=x, values=val).to_numpy()
     
     X, Y = np.meshgrid(
         np.linspace(xmin, xmax, x_bins),
@@ -141,7 +174,7 @@ def compare_heatmaps(data, xs, ys, vals, aggs=['min'], colormap='rocket', revers
     
     if share_cmap is True:
         fig.colorbar(c, ax=axs.ravel().tolist())
-    
+#%%
 fig, axs = plt.subplots(3, 2, figsize=(8, 9), dpi=250, sharex=True, sharey=True)
 fig.subplots_adjust(wspace=0.7, hspace=0.3)
 compare_heatmaps(
@@ -235,38 +268,39 @@ def pareto_pairplot(data, cols, plotcols=None):
                  fontsize=fontsize,
                  y=yh)
 
+# cols=['wind','solar','php','phs']
+# pareto_pairplot(
+#     data, 
+#     cols, 
+#     ['cost'] + cols)
 
-cols=['wind','solar','php','phs']
+# cols=['gen', 'php', 'phs']
+# pareto_pairplot(
+#     data, 
+#     cols, 
+#     ['cost', 's/w'] + cols)
+
+# pareto_pairplot(
+#     data, 
+#     ['cost', 'gen'])
+
+# pareto_pairplot(
+#     data, 
+#     ['cost', 'solar'])
+
+# pareto_pairplot(
+#     data, 
+#     ['cost', 'phs'])
+
+# pareto_pairplot(
+#     data, 
+#     ['cost', 'php'])
+
 pareto_pairplot(
     data, 
-    cols, 
-    ['cost'] + cols)
+    ['cost', 'gen', 'php'],
+    ['cost', 'wind', 'solar', 'php', 'phs'])
 
-cols=['gen', 'php', 'phs']
-pareto_pairplot(
-    data, 
-    cols, 
-    ['cost', 's/w'] + cols)
 
-pareto_pairplot(
-    data, 
-    ['cost', 'gen'])
-
-pareto_pairplot(
-    data, 
-    ['cost', 'solar'])
-
-pareto_pairplot(
-    data, 
-    ['cost', 'phs'])
-
-pareto_pairplot(
-    data, 
-    ['cost', 'php'])
-
-pareto_pairplot(
-    data, 
-    ['cost', 'gen'],
-    ['cost', 'wind', 'solar'])
 
 plt.show()

@@ -61,6 +61,7 @@ if __name__ == '__main__':
     #     Init_callback()
     
     z = (pzones+wzones+nodes)
+    first_pass = np.array([10.0]*z + [500.0])
     ultralow_res = np.array([1.0]*z + [100.0]) # 1 GW, 100 GWh
     low_res = np.array([0.1]*z + [10.0]) # 100 MW, 10 GWh
     medium_res = np.array([0.01]*z + [1.0]) # 10 MW, 1 GWh
@@ -68,7 +69,7 @@ if __name__ == '__main__':
     ultrahigh_res = np.array([0.000_1]*z + [0.01]) # 0.1 MW, 10 MWh
     polishing = np.array([0.000_001]*z + [0.000_1]) # 1 kW, 100 kWh
     
-    res = [ultralow_res, low_res, medium_res, high_res, ultrahigh_res, polishing]
+    res = [first_pass, ultralow_res, low_res, medium_res, high_res, ultrahigh_res, polishing]
 
     result = Direct(
         func=Vobj if args.vec else Obj, 

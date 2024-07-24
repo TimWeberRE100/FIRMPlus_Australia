@@ -17,11 +17,11 @@ parser.add_argument('-r', default=0.3, type=float, required=False, help='recombi
 
 parser.add_argument('-s', default=21, type=int, required=False, help='11, 12, 13, ...')
 
-parser.add_argument('-cb', default=0, type=int, required=False, help='Callback: 0-None, 1-generation elites, 2-everything')
+parser.add_argument('-cb', default=2, type=int, required=False, help='Callback: 0-None, 1-generation elites, 2-everything')
 parser.add_argument('-ver', default=1, type=int, required=False, help='Boolean - print progress to console')
 parser.add_argument('-vp', default=50, type=int, required=False, help='Maximum number of vectors to send to objective')
 parser.add_argument('-w', default=1, type=int, required=False, help='Maximum number of cores to parallelise over')
-parser.add_argument('-vec', default=1, type=int, required=False, help='Boolean - vectorised mode')
+parser.add_argument('-vec', default=0, type=int, required=False, help='Boolean - vectorised mode')
 parser.add_argument('-resume', default=0, type=int, required=False, help='Boolean - whether to restart')
 
 args = parser.parse_args()

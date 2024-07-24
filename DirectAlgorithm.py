@@ -396,7 +396,7 @@ def Direct(
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part1). Estimated time: ', end='', flush=True)  
 
                 if resolved_mask.sum()*len_allresolved < resolved_mask.sum()*((~resolved_mask).sum()):
-                    if resolved_mask.sum() <= cpu_count()*14 or resolved_mask.sum()*len_allresolved < 10e10:
+                    if resolved_mask.sum() <= cpu_count()*14 or resolved_mask.sum()*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='', flush=True)
                         llresolved_mask = landlocked_bysum(
                             list(childless[resolved_mask]),
@@ -420,7 +420,8 @@ def Direct(
                         
                         sort_time = (resolved_mask.sum() - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
                         print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
-                        new_accepted = np.concatenate((llresolved_mask, 
+
+                        llresolved_mask = np.concatenate((llresolved_mask, 
                             landlocked_bysum(
                                 list(childless[resolved_mask*~timer_mask]),
                                 list(np.concatenate((childless[resolved_mask], 
@@ -428,7 +429,7 @@ def Direct(
                                                      edge_resolved))),
                             bounds)))                    
                 else: 
-                    if resolved_mask.sum() <= cpu_count()*14 or resolved_mask.sum()*len_allresolved < 10e10:
+                    if resolved_mask.sum() <= cpu_count()*14 or resolved_mask.sum()*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='', flush=True)
                         llresolved_mask = landlocked_bycontra(
                             list(childless[resolved_mask]),
@@ -459,7 +460,7 @@ def Direct(
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part2). Estimated time: ', end='', flush=True)  
 
                 if len(edge_resolved)*len_allresolved < len(edge_resolved)*((~resolved_mask).sum()):
-                    if len(edge_resolved) <= cpu_count()*25 or len(edge_resolved)*len_allresolved < 10e10:
+                    if len(edge_resolved) <= cpu_count()*25 or len(edge_resolved)*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='', flush=True)
                         lledge_mask = landlocked_bysum(
                             list(edge_resolved),
@@ -488,7 +489,7 @@ def Direct(
                                                      edge_resolved))),
                             bounds)))                    
                 else: 
-                    if len(edge_resolved) <= cpu_count()*25 or len(edge_resolved)*len_allresolved < 10e10:
+                    if len(edge_resolved) <= cpu_count()*25 or len(edge_resolved)*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='', flush=True)
                         lledge_mask = landlocked_bycontra(
                             list(edge_resolved),

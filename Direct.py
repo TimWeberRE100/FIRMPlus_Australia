@@ -82,7 +82,7 @@ if __name__ == '__main__':
         disp = bool(args.ver),
         locally_biased=False,
         restart='Results/History{}'.format(scenario) if args.resume == 1 else '',
-        near_optimal=1.25,
+        near_optimal=1.15,
         program=(
             {'maxiter':20,
               'resolution':res[0],
@@ -90,7 +90,7 @@ if __name__ == '__main__':
               },
             {'maxiter':np.inf,
               'resolution':res[0],
-              'population':np.inf,
+              'population':10_000,
               },
             {'maxiter':20,
               'resolution':res[1],
@@ -98,7 +98,7 @@ if __name__ == '__main__':
               },
             {'maxiter':np.inf,
               'resolution':res[1],
-              'population':np.inf,
+              'population':10_000,
               },
 
             )

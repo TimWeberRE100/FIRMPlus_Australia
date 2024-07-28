@@ -400,7 +400,7 @@ def Direct(
                                                     axis=1)
                         writer(csvfile).writerows(printout)
                 del printout
-                for f in ('children', 'resolved'):
+                for f in ('parents', 'children'):
                     #replace files with temps
                     shutil.copyfile(f'{printfile}-{f}-temp.csv', f'{printfile}-{f}.csv')
                     os.remove(f'{printfile}-{f}-temp.csv')

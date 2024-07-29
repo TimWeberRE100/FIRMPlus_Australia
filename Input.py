@@ -100,15 +100,93 @@ elif scenario>=21:
     #direct network connections
     network_mask = np.array([(network==j).sum(axis=1).astype(np.bool_) for j in Nodel_int]).sum(axis=0)==2
     network = network[network_mask,:]
-
-    #all network connections
-    conn = np.vstack((
-        np.concatenate([Nodel_int]*len(Nodel_int)),
-        np.repeat(Nodel_int, len(Nodel_int)))).T
-    conn = conn[conn[:,0]!=conn[:,1]]
-    conn.sort(axis=1)
-    conn = np.unique(conn, axis=0)
+    networkdict = {v:k for k, v in enumerate(Nodel_int)}
+    #translate into indicies rather than Nodel_int values
+    network = np.array([networkdict[n] for n in network.flatten()], np.int64).reshape(network.shape)
     
+    def network_neighbours(n):
+        isn_mask = np.isin(network, n)
+        hasn_mask = isn_mask.sum(axis=1).astype(bool)
+        joins_n = network[hasn_mask][~isn_mask[hasn_mask]]
+        return joins_n
+    
+    def nthary_network(network_1):
+        """primary, secondary, tertiary, ..., nthary"""
+        """supply n-1thary to generate nthary etc."""
+        networkn = -1*np.ones((1,network_1.shape[1]+1), dtype=np.int64)
+        for row in network_1:
+            _networkn = -1*np.ones((1,network_1.shape[1]+1), dtype=np.int64)
+            joins_start = network_neighbours(row[0])
+            joins_end = network_neighbours(row[-1])
+            for n in joins_start:
+                if n not in row:
+                    _networkn = np.vstack((_networkn, np.insert(row, 0, n)))
+            for n in joins_end:
+                if n not in row:
+                    _networkn = np.vstack((_networkn, np.append(row, n)))
+            _networkn=_networkn[1:,:]
+            dup=[]
+            # find rows which are already in network
+            for i, r in enumerate(_networkn): 
+                for s in networkn:
+                    if np.setdiff1d(r, s).size==0:
+                        dup.append(i)
+            # find duplicated rows within n3
+            for i, r in enumerate(_networkn):
+                for j, s in enumerate(_networkn):
+                    if i==j:
+                        continue
+                    if np.setdiff1d(r, s).size==0:
+                        dup.append(i)
+            _networkn = np.delete(_networkn, np.unique(np.array(dup, dtype=np.int64)), axis=0)
+            if _networkn.size>0:
+                networkn = np.vstack((networkn, _networkn))
+        networkn = networkn[1:,:]
+        return networkn
+    
+    #This version of FIRM maxes out at quarternaty transmission
+    networks = [network]
+    while True:
+        n = nthary_network(networks[-1])
+        if n.size > 0:
+            networks.append(n)
+        else: 
+            break
+
+    def count_lines(network):
+        unique, counts = np.unique(network[:, np.array([0,-1])], return_counts=True)
+        if counts.size > 0:
+            return counts.max()
+        return 0
+    maxconnections = max([count_lines(network) for network in networks])
+
+    perfect = {0:0, 1:1, 2:3, 3:6, 4:10, 5:15, 6:21} #that's more than enough for now
+
+    directconns = -1*np.ones((len(Nodel)+1, len(Nodel)+1), np.int64)
+    for n, row in enumerate(networks[0]):
+        directconns[*row] = n
+        directconns[*row[::-1]] = n
+    
+    network = -1*np.ones((len(Nodel), perfect[len(networks)], maxconnections, 2), dtype=np.int64)
+    for i, net in enumerate(networks):
+        conns = np.zeros(len(Nodel), int)
+        for j, row in enumerate(net):
+            network[row[0], perfect[i]:perfect[i+1], conns[row[0]], 0] = row[1:]
+            network[row[-1], perfect[i]:perfect[i+1], conns[row[-1]], 0] = row[:-1][::-1]
+            conns[row[0]]+=1
+            conns[row[-1]]+=1
+            
+    for i in range(network.shape[0]):
+        for j in range(network.shape[1]):
+            for k in range(network.shape[2]):
+                if j in perfect.values():
+                    start=i
+                else: 
+                    start=network[i, j-1, k, 0]
+                network[i, j, k, 1] = directconns[start, network[i, j, k, 0]]
+
+
+        
     
 intervals, nodes = MLoad.shape
 years = int(resolution * intervals / 8760)
@@ -121,7 +199,7 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 
-lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * len(network))
+lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * len(networks[0]))
 ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [500.] * nodes + list(np.array(CDCmax)[network_mask]))
 
 #%%
@@ -209,8 +287,9 @@ solution_spec = [
     ('SW', float64[:]),
     ('TV', float64[:]),
     ('Topology', float64[:, :]),
-    ('network', int64[:, :]),
-    ('conn', int64[:, :]),
+    ('network', int64[:, :, :, :]),
+    ('directconns', int64[:,:]),
+    # ('conn', int64[:, :]),
     ('CHVDC', float64[:]),
     ('Import', float64[:, :]),
     ('Export', float64[:, :]),
@@ -230,7 +309,9 @@ class Solution:
         
         self.intervals, self.nodes = intervals, nodes
         self.resolution = resolution
-        self.network, self.conn = network, conn
+        self.network, self.directconns = network, directconns
+        
+        # self.network2, self.network3, self.network4 = network2, network3, network4
        
         self.MLoad = MLoad
 
@@ -277,5 +358,8 @@ class Solution:
 if __name__=='__main__':
     x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
     solution = Solution(x)#/1.25) 
-    solution._evaluate()
-    print(solution.Lcoe, solution.Penalties)
+    
+    def test():
+        solution._evaluate()
+        print(solution.Lcoe, solution.Penalties)
+    test()

@@ -713,7 +713,7 @@ def Direct(
                     writer(csvfile).writerows(printout)
             with open(printfile+'-resolved.csv', 'w') as csvfile:
                 writer(csvfile)
-            shutil.copyfile(printfile+'children-temp.csv', printfile+'children.csv')
+            shutil.copyfile(printfile+'-children-temp.csv', printfile+'-children.csv')
             os.remove('children.csv')
 
             print(' '*100, end='\r', flush=True)

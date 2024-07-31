@@ -144,7 +144,7 @@ elif scenario>=21:
         networkn = networkn[1:,:]
         return networkn
     
-    #This version of FIRM maxes out at quarternaty transmission
+    #This version of FIRM maxes out at quarternary transmission
     networks = [network]
     while True:
         n = nthary_network(networks[-1])
@@ -160,7 +160,7 @@ elif scenario>=21:
         return 0
     maxconnections = max([count_lines(network) for network in networks])
 
-    perfect = {0:0, 1:1, 2:3, 3:6, 4:10, 5:15, 6:21} #that's more than enough for now
+    perfect = np.array([0,1,3,6,10,15,21]) #that's more than enough for now
 
     directconns = -1*np.ones((len(Nodel)+1, len(Nodel)+1), np.int64)
     for n, row in enumerate(networks[0]):
@@ -179,14 +179,13 @@ elif scenario>=21:
     for i in range(network.shape[0]):
         for j in range(network.shape[1]):
             for k in range(network.shape[2]):
-                if j in perfect.values():
+                if j in perfect:
                     start=i
                 else: 
                     start=network[i, j-1, k, 0]
                 network[i, j, k, 1] = directconns[start, network[i, j, k, 0]]
 
-
-        
+    directconns=directconns[:-1, :-1]
     
 intervals, nodes = MLoad.shape
 years = int(resolution * intervals / 8760)
@@ -289,10 +288,8 @@ solution_spec = [
     ('Topology', float64[:, :]),
     ('network', int64[:, :, :, :]),
     ('directconns', int64[:,:]),
-    # ('conn', int64[:, :]),
     ('CHVDC', float64[:]),
-    ('Import', float64[:, :]),
-    ('Export', float64[:, :]),
+    ('Transmission', float64[:, :]),
 ]
 
 @jitclass(solution_spec)
@@ -360,6 +357,7 @@ if __name__=='__main__':
     solution = Solution(x)#/1.25) 
     
     def test():
+        solution = Solution(x)#/1.25) 
         solution._evaluate()
         print(solution.Lcoe, solution.Penalties)
     test()

@@ -714,7 +714,7 @@ def Direct(
             with open(printfile+'-resolved.csv', 'w') as csvfile:
                 writer(csvfile)
             shutil.copyfile(printfile+'-children-temp.csv', printfile+'-children.csv')
-            os.remove('children.csv')
+            os.remove(printfile+'-children-temp.csv')
 
             print(' '*100, end='\r', flush=True)
         

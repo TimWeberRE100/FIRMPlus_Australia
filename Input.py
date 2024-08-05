@@ -61,9 +61,10 @@ if scenario<=17:
 
     Nodel_int, PVl_int, Windl_int = [x[x==n_node[node]] for x in (Nodel_int, PVl_int, Windl_int)]
     Nodel, PVl, Windl = [x[x==node] for x in (Nodel, PVl, Windl)]
-    network = np.empty((0,0), dtype=np.int64)
+    network = np.empty((0,0,0,0), dtype=np.int64)
     network_mask = np.zeros(7, dtype=np.bool_)
-    conn = np.empty((0,0), dtype=np.int64) 
+    directconns = np.empty((0,0), dtype=np.int64) 
+    trans_tdc_mask = np.empty((0,0), dtype=np.bool_)
 
 elif scenario>=21:
     coverage = [np.array(['NSW', 'QLD', 'SA', 'TAS', 'VIC']),
@@ -103,6 +104,20 @@ elif scenario>=21:
     networkdict = {v:k for k, v in enumerate(Nodel_int)}
     #translate into indicies rather than Nodel_int values
     network = np.array([networkdict[n] for n in network.flatten()], np.int64).reshape(network.shape)
+    
+    trans_tdc_mask = np.zeros((len(network), MLoad.shape[1]), np.bool_)
+    for line, row in enumerate(network):
+        trans_tdc_mask[line, row[0]] = True
+    
+    directconns = -1*np.ones((len(Nodel)+1, len(Nodel)+1), np.int64)
+    for n, row in enumerate(network):
+        directconns[*row] = n
+        directconns[*row[::-1]] = n
+    
+    # nodeline_mask = np.zeros((len(network), MLoad.shape[1]), np.bool_)
+    # for i in range(nodeline_mask.shape[0]):
+    #     for j in range(nodeline_mask.shape[1]):
+    #         nodeline_mask[i,j] = i in directconns[j]
     
     def network_neighbours(n):
         isn_mask = np.isin(network, n)
@@ -162,31 +177,27 @@ elif scenario>=21:
 
     perfect = np.array([0,1,3,6,10,15,21]) #that's more than enough for now
 
-    directconns = -1*np.ones((len(Nodel)+1, len(Nodel)+1), np.int64)
-    for n, row in enumerate(networks[0]):
-        directconns[*row] = n
-        directconns[*row[::-1]] = n
-    
-    network = -1*np.ones((len(Nodel), perfect[len(networks)], maxconnections, 2), dtype=np.int64)
+    network = -1*np.ones((2, len(Nodel), perfect[len(networks)], maxconnections), dtype=np.int64)
     for i, net in enumerate(networks):
         conns = np.zeros(len(Nodel), int)
         for j, row in enumerate(net):
-            network[row[0], perfect[i]:perfect[i+1], conns[row[0]], 0] = row[1:]
-            network[row[-1], perfect[i]:perfect[i+1], conns[row[-1]], 0] = row[:-1][::-1]
+            network[0, row[0], perfect[i]:perfect[i+1], conns[row[0]]] = row[1:]
+            network[0, row[-1], perfect[i]:perfect[i+1], conns[row[-1]]] = row[:-1][::-1]
             conns[row[0]]+=1
             conns[row[-1]]+=1
             
-    for i in range(network.shape[0]):
-        for j in range(network.shape[1]):
-            for k in range(network.shape[2]):
+    for i in range(network.shape[1]):
+        for j in range(network.shape[2]):
+            for k in range(network.shape[3]):
                 if j in perfect:
                     start=i
                 else: 
-                    start=network[i, j-1, k, 0]
-                network[i, j, k, 1] = directconns[start, network[i, j, k, 0]]
+                    start=network[0, i, j-1, k]
+                network[1, i, j, k] = directconns[start, network[0, i, j, k]]
 
     directconns=directconns[:-1, :-1]
     
+        
 intervals, nodes = MLoad.shape
 years = int(resolution * intervals / 8760)
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
@@ -245,10 +256,11 @@ solution_spec = [
     ('GWind', float64[:, :]),  # 2D array of floats
     ('CPHP', float64[:]),
     ('CPHS', float64[:]),
+    ('CHVDC', float64[:]),
     ('efficiency', float64),
-    ('Nodel_int', int64[:]), 
-    ('PVl_int', int64[:]),
-    ('Windl_int', int64[:]),
+    # ('Nodel_int', int64[:]), 
+    # ('PVl_int', int64[:]),
+    # ('Windl_int', int64[:]),
     ('GBaseload', float64[:, :]),  # 2D array of floats
     ('CPeak', float64[:]),  # 1D array of floats
     ('CHydro', float64[:]),  # 1D array of floats
@@ -259,6 +271,8 @@ solution_spec = [
     ('Deficit', float64[:,:]),
     ('Spillage', float64[:,:]),
     ('Netload' ,float64[:,:]),
+    ('Import', float64[:, :]),
+    ('Export', float64[:, :]),
     ('Penalties', float64),
     ('Lcoe', float64),
     ('evaluated', boolean),
@@ -288,8 +302,8 @@ solution_spec = [
     ('Topology', float64[:, :]),
     ('network', int64[:, :, :, :]),
     ('directconns', int64[:,:]),
-    ('CHVDC', float64[:]),
-    ('Transmission', float64[:, :]),
+    ('trans_tdc_mask', boolean[:,:]),
+
 ]
 
 @jitclass(solution_spec)
@@ -307,6 +321,7 @@ class Solution:
         self.intervals, self.nodes = intervals, nodes
         self.resolution = resolution
         self.network, self.directconns = network, directconns
+        self.trans_tdc_mask = trans_tdc_mask
         
         # self.network2, self.network3, self.network4 = network2, network3, network4
        
@@ -325,16 +340,21 @@ class Solution:
             for j in range(len(self.CWind)):
                 CWind_tiled[i, j] = self.CWind[j]
 
-        self.GPV = TSPV * CPV_tiled * 1000.  # GPV(i, t), GW to MW
-        self.GWind = TSWind * CWind_tiled * 1000.  # GWind(i, t), GW to MW
-
+        GPV = TSPV * CPV_tiled * 1000.  # GPV(i, t), GW to MW
+        GWind = TSWind * CWind_tiled * 1000.  # GWind(i, t), GW to MW
+        
+        self.GPV, self.GWind = np.empty((intervals, nodes), np.float64), np.empty((intervals, nodes), np.float64)
+        for i, j in enumerate(Nodel_int):
+            self.GPV[:,i] = GPV[:, PVl_int==j].sum(axis=1)
+            self.GWind[:,i] = GWind[:, Windl_int==j].sum(axis=1) 
+            
         self.CPHP = x[widx: spidx]  # CPHP(j), GW
         self.CPHS = x[spidx: seidx]  # S-CPHS(j), GWh
         self.CHVDC = x[seidx:]
         
         self.efficiency = efficiency
 
-        self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
+        # self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
         
 
         self.GBaseload = GBaseload

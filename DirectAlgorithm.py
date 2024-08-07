@@ -348,6 +348,9 @@ def Direct(
         locally_biased = step['locally_biased'] if 'locally_biased' in keys else locally_biased
         near_optimal = step['near_optimal'] if 'near_optimal' in keys else near_optimal
 
+        recalc_resolved=True if 'resolution' in keys else False
+            
+
         rect_dim = len(lb) if rect_dim==-1 else rect_dim
         assert rect_dim <= ndim
         dims = np.arange(rect_dim, dtype=np.int64)
@@ -375,6 +378,9 @@ def Direct(
             print(' ', end='\r', flush=True)
             print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles...', end='\r', flush=True)
             fev += len(new_hrects)
+    
+            if len(new_hrects) > 1: 
+                recalc_resolved = True
     
             # all hrects which do not have any children  
             childless = np.concatenate((new_hrects, archive))
@@ -423,7 +429,7 @@ def Direct(
             len_allresolved = resolved_mask.sum() + len(edge_resolved) + len(landlocked_resolved)
 
             #choose which method to use based on approximate no. of comparisons required
-            if resolved_mask.sum() > 0:
+            if resolved_mask.sum() > 0 and recalc_resolved is True:
                 print(' ', end = '\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part1). Estimated time: ', end='', flush=True)  
 
@@ -451,7 +457,7 @@ def Direct(
                             bounds)
                         
                         sort_time = (resolved_mask.sum() - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
-                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
+                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
 
                         llresolved_mask = np.concatenate((llresolved_mask, 
                             landlocked_bysum(
@@ -478,7 +484,7 @@ def Direct(
                             list(childless[~resolved_mask]))
 
                         sort_time = (resolved_mask.sum() - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
-                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
+                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
                         llresolved_mask = np.concatenate((llresolved_mask, 
                             landlocked_bycontra(
                                 list(childless[resolved_mask*~timer_mask]),
@@ -486,13 +492,13 @@ def Direct(
                 print(' '*160, end='\r', flush=True)
             else: 
                 llresolved_mask = np.array([], dtype=np.bool_)
-            if len(edge_resolved)>0:
+            if len(edge_resolved)>0 and recalc_resolved is True:
                 print(' ', end = '\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part2). Estimated time: ', end='', flush=True)  
 
                 if len(edge_resolved)*len_allresolved < len(edge_resolved)*((~resolved_mask).sum()):
                     if len(edge_resolved) <= cpu_count()*25 or len(edge_resolved)*len_allresolved < 50e10 / ndim:
-                        print('< a few minutes. ', end ='', flush=True)
+                        print('< a few minutes. ', end ='\r', flush=True)
                         lledge_mask = landlocked_bysum(
                             list(edge_resolved),
                             list(np.concatenate((childless[resolved_mask], 
@@ -511,7 +517,7 @@ def Direct(
                             bounds)
                         
                         sort_time = (len(edge_resolved) - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
-                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
+                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
                         lledge_mask = np.concatenate((lledge_mask, 
                             landlocked_bysum(
                                 list(edge_resolved[time_test_range:]),
@@ -521,7 +527,7 @@ def Direct(
                             bounds)))                    
                 else: 
                     if len(edge_resolved) <= cpu_count()*25 or len(edge_resolved)*len_allresolved < 50e10 / ndim:
-                        print('< a few minutes. ', end ='', flush=True)
+                        print('< a few minutes. ', end ='\r', flush=True)
                         lledge_mask = landlocked_bycontra(
                             list(edge_resolved),
                             list(childless[~resolved_mask]))
@@ -534,7 +540,7 @@ def Direct(
                             list(childless[~resolved_mask]))
 
                         sort_time = (len(edge_resolved) - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
-                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='', flush=True)
+                        print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
                         lledge_mask = np.concatenate((lledge_mask, 
                             landlocked_bycontra(
                                 list(edge_resolved[time_test_range:]),
@@ -543,6 +549,7 @@ def Direct(
                 print(' '*160, end='\r', flush=True)
             else: 
                 lledge_mask = np.array([], dtype=np.bool_)
+            recalc_resolved=False
             landlocked_resolved = np.concatenate((landlocked_resolved,
                                                   edge_resolved[lledge_mask],
                                                   childless[resolved_mask][llresolved_mask]))

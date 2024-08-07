@@ -13,8 +13,9 @@ perfect = np.array([0,1,3,6,10,15,21])
 
 @njit
 def Reliability(solution, flexible, start=None, end=None):
-    """ flexible = np.ones((intervals, nodes))*CPeak*1000; end=None; start=None """
-
+    """ 
+    flexible = np.ones((intervals, nodes))*CPeak*1000; end=None; start=None 
+    """
     network = solution.network
     trans_tdc_mask = solution.trans_tdc_mask
     networksteps = np.where(perfect == network.shape[2])[0][0]
@@ -26,7 +27,7 @@ def Reliability(solution, flexible, start=None, end=None):
 
     Pcapacity = solution.CPHP * 1000 # S-CPHP(j), GW to MW
     Scapacity = solution.CPHS * 1000 # S-CPHS(j), GWh to MWh
-    Hcapacity = solution.CHVDC * 1000
+    Hcapacity = solution.CHVDC * 1000 # GW to MW
     nhvdc = len(solution.CHVDC)
     efficiency, resolution = solution.efficiency, solution.resolution 
 
@@ -34,19 +35,20 @@ def Reliability(solution, flexible, start=None, end=None):
     Charge = np.zeros(shape2d, dtype=np.float64)
     Storage = np.zeros(shape2d, dtype=np.float64)
     Deficit = np.zeros(shape2d, dtype=np.float64)
-    Import = np.zeros(shape2d, dtype=np.float64)
-    Export = np.zeros(shape2d, dtype=np.float64)
-    TDC = np.zeros((intervals, nhvdc))
+    Transmission = np.zeros((intervals, nhvdc, nodes), dtype = np.float64)
+
+    Storaget_1 = 0.5*Scapacity
 
     for t in range(intervals):
         Netloadt = Netload[t]
-        Storaget_1 = Storage[t-1,:] if t>0 else 0.5*Scapacity
 
         Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
         Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
         Deficitt = np.maximum(Netloadt - Discharget ,0)
 
         Transmissiont=np.zeros((nhvdc, nodes), dtype=np.float64)
+        
+        # # The following provides a relatively minor benefit to cost for increased computation time
         # if Deficitt.sum() > 1e-6:
         #     # Fill deficits with transmission without drawing down from battery reserves
         #     Fillt = np.maximum(Netloadt - Discharget, 0)
@@ -65,7 +67,8 @@ def Reliability(solution, flexible, start=None, end=None):
             Fillt = np.maximum(Netloadt - Discharget, 0)
             Surplust = -1 * np.minimum(0, Netloadt + Charget) + np.minimum(Pcapacity, Storaget_1 / resolution)
 
-            Transmissiont = hvdc_even2(Fillt, Surplust, Hcapacity, network, networksteps, Transmissiont)
+            Transmissiont = hvdc(Fillt, Surplust, Hcapacity, network, networksteps, 
+                                 np.maximum(0, Transmissiont), np.minimum(0, Transmissiont))
             
             Netloadt = Netload[t] - Transmissiont.sum(axis=0)
             Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
@@ -73,34 +76,36 @@ def Reliability(solution, flexible, start=None, end=None):
 
         # =============================================================================
         # TODO: If deficit Go back in time and discharge batteries 
-        # This may make the time a fair bit longer
+        # This will be extemely computationally intensive
         # =============================================================================
         
         Surplust = -1 * np.minimum(0, Netloadt + Charget) 
         if Surplust.sum() > 1e-6:
+            # raise KeyboardInterrupt
             # Distribute surplus energy with transmission to areas with spare charging capacity
             Fillt = (np.maximum(0, Netloadt) #load
                         + np.minimum(Pcapacity, (Scapacity - Storaget_1) / efficiency / resolution) #full charging capacity
                         - Charget) #charge capacity already in use
 
-            Transmissiont = hvdc_even2(Fillt, Surplust, Hcapacity, network, networksteps,
-                                 Transmissiont)
+            Transmissiont = hvdc(Fillt, Surplust, Hcapacity, network, networksteps,
+                                 np.maximum(0, Transmissiont), np.minimum(0, Transmissiont))
             
             Netloadt = Netload[t] - Transmissiont.sum(axis=0)
             Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
             Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
 
         Storaget = Storaget_1 - Discharget * resolution + Charget * resolution * efficiency
+        Storaget_1 = Storaget.copy()
         
         Discharge[t] = Discharget
         Charge[t] = Charget
         Storage[t] = Storaget
-        Import[t] = np.maximum(0, Transmissiont).sum(axis=0)
-        Export[t] = np.minimum(0, Transmissiont).sum(axis=0)
-        TDC[t] = (Transmissiont*trans_tdc_mask).sum(axis=1)
+        Transmission[t] = Transmissiont
         
-    Deficit = np.maximum(Netload - Import + Export - Discharge, np.zeros_like(Netload))
-    Spillage = -1 * np.minimum(Netload + Charge, np.zeros_like(Netload))
+    ImpExp = Transmission.sum(axis=1)
+    
+    Deficit = np.maximum(0, Netload - ImpExp - Discharge)
+    Spillage = -1 * np.minimum(0, Netload - ImpExp + Charge)
 
     solution.flexible = flexible
     solution.Spillage = Spillage
@@ -108,19 +113,16 @@ def Reliability(solution, flexible, start=None, end=None):
     solution.Discharge = Discharge
     solution.Storage = Storage
     solution.Deficit = Deficit
-    solution.Import = Import
-    solution.Export = Export
-    solution.TDC = TDC
+    solution.Import = np.maximum(0, ImpExp)
+    solution.Export = -1 * np.minimum(0, ImpExp)
+    solution.TDC = (np.atleast_3d(trans_tdc_mask).T*Transmission).sum(axis=2)
     
     return Deficit
 
 @njit
-def hvdc(Fillt, Surplust, Hcapacity, network, networksteps, Transmissiont):
-    for n in range(network.shape[1]):
-        if Fillt[n] == 0:
-            continue
-       
-        for leg in range(networksteps):
+def hvdc(Fillt, Surplust, Hcapacity, network, networksteps, Importt, Exportt):
+    for leg in range(networksteps):
+        for n in np.where(Fillt>0)[0]:
             donors = network[:, n, perfect[leg]:perfect[leg+1], :]
             donors, donor_lines = donors[0, :, :], donors[1, :, :]
   
@@ -129,89 +131,41 @@ def hvdc(Fillt, Surplust, Hcapacity, network, networksteps, Transmissiont):
                 break
             donor_lines = donor_lines[:, valid_mask]
             donors = donors[:, valid_mask]
+            if Surplust[donors[-1]].sum() == 0:
+                continue
   
             ndonors = valid_mask.sum()
             donors = np.concatenate((n*np.ones((1, ndonors), np.int64), donors))
-            d=0
-            while Fillt[n] > 0 and d < ndonors:
-                #TODO at the moment surplus is taken from first zone, and second isn't 
-                #     touched unless necessary. Would be nice to take from all evenly.
-                donor_line_cap = np.inf 
-                for l in donor_lines[:,d]:
+            
+            _transmission = np.zeros_like(Fillt)
+            for d, dl in zip(donors[-1], donor_lines.T): #print(d,dl)
+                donor_line_cap = np.inf
+                for l in dl:
                     # transmission cap is minimum of capacities of lines involved
                     donor_line_cap = min(
                         donor_line_cap, 
-                        Hcapacity[l] - np.maximum(0, Transmissiont[l, :]).sum()
+                        Hcapacity[l] - Importt[l, :].sum()
                         )
-                                          
-                _transmission = max(0, min(donor_line_cap, Surplust[donors[-1, d]], Fillt[n]))
-               
-                for step in range(leg+1): 
-                    Transmissiont[donor_lines[step, d], donors[step, d]] += _transmission
-                    Transmissiont[donor_lines[step, d], donors[step+1, d]] -= _transmission
-  
-                Fillt[n] -= _transmission
-                Surplust[donors[-1, d]] -= _transmission
-                d+=1
-               
-            if Fillt[n] == 0:
-                break
+                _transmission[d] = min(donor_line_cap, Surplust[d])
                 
-    return Transmissiont
-
+            _transmission /= max(1, _transmission.sum()/Fillt[n])
+            
+            for nd, d, dl in zip(range(ndonors), donors[-1], donor_lines.T):
+                for step, l in enumerate(dl): 
+                    Importt[l, donors[step, nd]] += _transmission[d]
+                    Exportt[l, donors[step+1, nd]] -= _transmission[d]
+            Fillt[n] -= _transmission.sum()
+            Surplust -= _transmission                
+            
+        if Surplust.sum() == 0 or Fillt.sum() == 0:
+            break
+                
+    return Importt+Exportt
 
 
 @njit
 def hvdc_even(Fillt, Surplust, Hcapacity, network, networksteps, Transmissiont):
-    """takes energy from neighbours evenly, but takes slightly more than 2x as long to compute"""
-    for n in range(network.shape[1]):
-        if Fillt[n] <= 0:
-            continue
-        for leg in range(networksteps):
-            donors = network[:, n, perfect[leg]:perfect[leg+1], :]
-            donors, donor_lines = donors[0, :, :], donors[1, :, :]
-  
-            valid_mask = donors[-1] != -1
-            if np.prod(~valid_mask):
-                break
-            donor_lines = donor_lines[:, valid_mask]
-            donors = donors[:, valid_mask]
-  
-            ndonors = valid_mask.sum()
-            donors = np.concatenate((n*np.ones((1, ndonors), np.int64), donors))
-            
-            _transmission = Surplust[donors[-1]]
-            if _transmission.sum() == 0:
-                continue
-            
-            CLine= Hcapacity - np.maximum(0, Transmissiont).sum(axis=1)
-            
-            # reduce _transmission to line capacity
-            for line in np.unique(donor_lines):
-                di = np.where(donor_lines == line)[1]
-                if CLine[line] <= 1e-6:
-                    _transmission[di] = 0
-                    continue
-                _transmission[di] = _transmission[di] / max(1, _transmission[di].sum() / CLine[line])
-                    
-            # reduce _transmission from donors to not exceed fill requirement
-            _transmission /= max(1, _transmission.sum()/Fillt[n])
-            
-            Fillt[n] -= _transmission.sum()
-
-            Surplust[donors[-1]] -= _transmission
-            for step in range(leg+1): 
-                for d in range(ndonors):
-                    Transmissiont[donor_lines[step, d], donors[step, d]] += _transmission[d]
-                    Transmissiont[donor_lines[step, d], donors[step+1, d]] -= _transmission[d]
-            
-            if Fillt[n] <= 0:
-                break
-                
-    return Transmissiont
-
-@njit
-def hvdc_even2(Fillt, Surplust, Hcapacity, network, networksteps, Transmissiont):
+    raise NotImplementedError
     maxconnections = network.shape[-1]
 
     for leg in range(networksteps):

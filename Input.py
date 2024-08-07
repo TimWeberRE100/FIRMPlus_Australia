@@ -105,9 +105,9 @@ elif scenario>=21:
     #translate into indicies rather than Nodel_int values
     network = np.array([networkdict[n] for n in network.flatten()], np.int64).reshape(network.shape)
     
-    trans_tdc_mask = np.zeros((len(network), MLoad.shape[1]), np.bool_)
+    trans_tdc_mask = np.zeros((MLoad.shape[1], len(network)), np.bool_)
     for line, row in enumerate(network):
-        trans_tdc_mask[line, row[0]] = True
+        trans_tdc_mask[row[0], line] = True
     
     directconns = -1*np.ones((len(Nodel)+1, len(Nodel)+1), np.int64)
     for n, row in enumerate(network):

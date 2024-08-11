@@ -254,7 +254,7 @@ def F(S):
     Deficit = Reliability(S, flexible=np.zeros((intervals, ) , dtype=np.float64)) # Sj-EDE(t, j), MW
     Flexible = Deficit.sum(axis=0) * resolution / years / efficiency # MWh p.a.
     Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
-    PenHydro = np.maximum(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
+    PenHydro = np.maximum(0, Hydro - 20_000_000) # TWh p.a. to MWh p.a.
 
     Deficit = Reliability(S, flexible=np.ones((intervals, ), dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
     PenDeficit = np.maximum(0, Deficit.sum(axis=0) * resolution) # MWh
@@ -270,14 +270,20 @@ def F(S):
 
     _c = 0 if scenario <= 17 else -1
     cost = (factor * np.array([S.CPV.sum(), S.CWind.sum(), S.CPHP.sum(), S.CPHS] + list(CDC) +
-                             [S.CPV.sum(), S.CWind.sum(), Hydro * 0.000001, _c, _c])
-            ).sum()
+                              [S.CPV.sum(), S.CWind.sum(), Hydro * 0.000_001, _c, _c])
+            )
 
     loss = TDC_abs.sum(axis=0) * DCloss
-    loss = loss.sum(axis=0) * 0.000000001 * resolution / years # PWh p.a.
-    LCOE = cost / np.abs(energy - loss)
+    loss = loss.sum(axis=0) * 0.000_000_001 * resolution / years # PWh p.a.
+    energyloss = np.abs(energy - loss)
+    LCOE = cost.sum() / energyloss
+    LCOG = 1000 * cost[np.array([0, 1, 13])].sum() / (
+        0.000_001*(resolution/years*(S.GPV.sum() + S.GWind.sum()) + Hydro))
+    LCOBS = cost[np.array([2,3,14])].sum()/energyloss
+    LCOBT = cost[np.array([4,5,6,7,8,9,10,11,12,15])].sum()/energyloss
+    LCOBL = LCOE - LCOG - LCOBS - LCOBT
     
-    return LCOE, (PenHydro+PenDeficit+PenDC)
+    return LCOE, (PenHydro+PenDeficit+PenDC), LCOG, LCOBS, LCOBT, LCOBL
 
 # Specify the types for jitclass
 solution_spec = [
@@ -308,7 +314,11 @@ solution_spec = [
     ('Spillage', float64[:]),
     ('Netload' ,float64[:]),
     ('Penalties', float64),
-    ('Lcoe', float64),
+    ('LCOE', float64),
+    ('LCOG', float64),
+    ('LCOBS', float64),
+    ('LCOBT', float64),
+    ('LCOBL', float64),
     ('evaluated', boolean),
     ('vectorised',boolean),
     ('MPV', float64[:, :]),
@@ -322,8 +332,6 @@ solution_spec = [
     ('MSpillage', float64[:, :]),
     ('MHydro', float64[:, :]),
     ('MBio', float64[:, :]),
-    ('CDP', float64[:]),
-    ('CDS', float64[:]),
     ('TDC', float64[:, :]),
     ('CDC', float64[:]),
     ('FQ', float64[:]),
@@ -372,7 +380,7 @@ class Solution:
         self.evaluated=False
         
     def _evaluate(self):
-        self.Lcoe, self.Penalties = F(self)
+        self.LCOE, self.Penalties, self.LCOG, self.LCOBS, self.LCOBT, self.LCOBL = F(self)
         self.evaluated=True
 
     # def __repr__(self):
@@ -383,6 +391,15 @@ if __name__=='__main__':
     x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
     solution = Solution(x)#/1.25) 
     solution._evaluate()
-    print(solution.Lcoe, solution.Penalties)
+    print(solution.LCOE, solution.Penalties)
+    print(solution.LCOE, solution.LCOG, solution.LCOBS, solution.LCOBT, solution.LCOBL)
+
     
+    def test():
+        x = np.random.rand(len(lb))*(ub-lb)+lb
+        solution = Solution(x)#/1.25) 
+        solution._evaluate()
+        print(solution.LCOE, solution.Penalties)
+        print(solution.LCOE, solution.LCOG, solution.LCOBS, solution.LCOBT, solution.LCOBL)
+    # test()
         

@@ -31,18 +31,22 @@ def gen_inds(npop, vsize=args.vp):
 def Obj(x):
     S = Solution(x)
     S._evaluate()
-    result = S.Lcoe + S.Penalties
+    result = np.array([S.LCOE + S.Penalties, 
+                       S.LCOE, S.LCOG, S.LCOBS, 
+                       S.LCOBT, S.LCOBL], dtype=np.float64)
     return result
     
     
 @njit
 def Vobj(x, maxvectorwidth=args.vp):
-    results = np.empty(len(x.T), dtype=np.float64)
+    results = np.empty((len(x.T), 6), dtype=np.float64)
     inds = gen_inds(len(x.T), maxvectorwidth)
     for ind in inds:
         S = VSolution(x[:, ind])
         S._evaluate()
-        results[ind] = S.Lcoe + S.Penalties
+        results[ind] = np.array([S.LCOE + S.Penalties, 
+                           S.LCOE, S.LCOG, S.LCOBS, 
+                           S.LCOBT, S.LCOBL])
     return results
     
 def Callback_1(h):
@@ -83,6 +87,7 @@ if __name__ == '__main__':
         locally_biased=False,
         restart='Results/History{}'.format(scenario) if args.resume == 1 else '',
         near_optimal=1.15,
+        extra_output=True,
         program=(
             {'maxiter':20,
               'resolution':res[0],

@@ -47,6 +47,7 @@ spec = [
     ('centre', float64[:]),
     ('ndim', int64),
     ('f', float64),
+    ('extras', float64[:]),
     ('parent_f', float64),
     ('lb', float64[:]),
     ('ub', float64[:]),
@@ -60,7 +61,7 @@ spec = [
 
 @jitclass(spec)
 class hyperrectangle():
-    def __init__(self, centre, f, generation, cuts, lb, ub, parent_f):
+    def __init__(self, centre, f, generation, cuts, extras, lb, ub, parent_f):
         self.centre = centre
         self.ndim = len(centre)
 
@@ -71,6 +72,7 @@ class hyperrectangle():
         self.cuts = cuts
         self.volume = (self.ub-self.lb).prod()
         self.length_inds = np.log10(self.ub-self.lb)
+        self.extras = extras
 
 @njit
 def hrect_is_semibarren(h, dims, log_min_l):
@@ -181,7 +183,7 @@ def _generate_centres(hrect, indcs, dims):
 
 
 @njit
-def _divide_vec(func, hrect, dims, f_args, log_min_l):
+def _divide_vec(func, hrect, dims, f_args, log_min_l, nextras):
     # do not split along resolution axes
     dims = dims[(hrect.length_inds >= log_min_l)[dims]]
     l_dim=len(dims)
@@ -198,13 +200,37 @@ def _divide_vec(func, hrect, dims, f_args, log_min_l):
     f_values = func(centres.T, *f_args)
         
     hrects = [hyperrectangle(
-        centres[k], f_values[k], gen, cuts, lbs[k], ubs[k], pf) 
+        centres[k], f_values[k], gen, cuts, np.array([], np.float64), lbs[k], ubs[k], pf) 
+        for k in range(n_new)]
+
+    return hrects
+
+@njit
+def _divide_vec_extra(func, hrect, dims, f_args, log_min_l, nextras):
+    # do not split along resolution axes
+    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
+    l_dim=len(dims)
+    if l_dim == 0:
+        # do not lose hrect - may be splittable along different axis
+        return [hrect] 
+    n_new = 2**l_dim
+    indcs = _generate_boolmatrix(l_dim)
+
+    centres = _generate_centres(hrect, indcs, dims)
+    lbs, ubs = _generate_bounds(hrect, indcs, dims)
+    pf, gen, cuts = hrect.f, hrect.generation + 1, hrect.cuts + l_dim
+    
+    f_values = func(centres.T, *f_args)
+    f_values, extras = f_values[:,0], f_values[:,1:]
+        
+    hrects = [hyperrectangle(
+        centres[k], f_values[k], gen, cuts, extras[k], lbs[k], ubs[k], pf) 
         for k in range(n_new)]
 
     return hrects
 
 @njit(parallel=True)
-def _divide_mp(func, hrect, dims, f_args, log_min_l):
+def _divide_mp(func, hrect, dims, f_args, log_min_l, nextras):
     # do not split along resolution axes
     dims = dims[(hrect.length_inds >= log_min_l)[dims]]
     l_dim=len(dims)
@@ -223,7 +249,32 @@ def _divide_mp(func, hrect, dims, f_args, log_min_l):
         f_values[i] = func(centres[i,:], *f_args)
     
     hrects = [hyperrectangle(
-        centres[k], f_values[k], gen, cuts, lbs[k], ubs[k], pf) 
+        centres[k], f_values[k], gen, cuts, np.array([], np.float64), lbs[k], ubs[k], pf) 
+        for k in range(n_new)]
+    return hrects
+
+@njit(parallel=True)
+def _divide_mp_extra(func, hrect, dims, f_args, log_min_l, nextras):
+    # do not split along resolution axes
+    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
+    l_dim=len(dims)
+    if l_dim == 0:
+        # do not lose hrect 
+        return [hrect] 
+    n_new = 2**l_dim
+    indcs = _generate_boolmatrix(l_dim)
+
+    centres = _generate_centres(hrect, indcs, dims)
+    lbs, ubs = _generate_bounds(hrect, indcs, dims)
+    pf, gen, cuts = hrect.f, hrect.generation + 1, hrect.cuts + l_dim
+    
+    f_values = np.empty((n_new, nextras+1), dtype=np.float64)
+    for i in prange(n_new):
+        f_values[i] = func(centres[i,:], *f_args)
+    f_values, extras = f_values[:,0], f_values[:, 1:]
+    
+    hrects = [hyperrectangle(
+        centres[k], f_values[k], gen, cuts, extras[k], lbs[k], ubs[k], pf) 
         for k in range(n_new)]
     return hrects
 
@@ -235,6 +286,7 @@ def Direct(
     printfile='',
     restart='',
     disp=False,
+    extra_output=False,
     program=None,
     
     f_args=(),
@@ -267,13 +319,18 @@ def Direct(
                         in this FIRM implementation). You can read in that file and restart 
                         the optimisation from where the previous one ended. 
                     - Give the file name containing the points already evaluated. 
+    disp            - boolean. Prints out information at each iteration.
+    extra_output    - This is used to minimise redundant calculation. If the objective
+                        function returns extra information which is wanted to be known, 
+                        extra_ouput=True allows DIRECT to access this and print it out.
+                        The outputs must be an homogeneous numpy array. The first output is 
+                        taken to be the objective. 
     program         - A tuple of dictionaries with keyword arguments for DIRECT
                     - Allows changing of optimisation paramters at prespecified
                         points without needing to stop and restart
                     - Note, arguments passed through program will overwrite arguments
                         passed to the optimiser. Arguments will not be reset except 
                         by passing them to the next step of the program
-    disp            - boolean. Prints out information at each iteration.
     -------------------------
     The following arguments can be overwritten by program
     -------------------------
@@ -310,8 +367,17 @@ def Direct(
     centre = 0.5*(ub - lb) + lb 
     MAXPARENTS = 700_000 #used to prevent memory errors 
     
+    if extra_output:
+        if vectorizable: 
+            nextras = len(func(np.atleast_2d(centre).T, *f_args)[0])-1
+        else: 
+            nextras = len(func(centre, *f_args))-1
+    else: 
+        nextras = 0
+    
     if restart != '': 
-        archive, elite = _restart(restart, bounds, disp)
+        
+        archive, elite = _restart(restart, bounds, nextras, disp)
         parents, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         archive = np.array(archive)
     else: 
@@ -319,6 +385,10 @@ def Direct(
             f = func(np.atleast_2d(centre).T, *f_args)[0]
         else: 
             f = func(centre, *f_args)
+        if extra_output:
+            f, extras = f[0], f[1:]
+        else:
+            extras = np.array([], np.float64)
             
         if printfile!='':
             with open(printfile+'-parents.csv', 'w', newline='') as csvfile:
@@ -328,11 +398,20 @@ def Direct(
             with open(printfile+'-resolved.csv', 'w') as csvfile:
                 writer(csvfile)
             
-        elite = hyperrectangle(centre, f, -1, 0, lb, ub, np.inf)
+        elite = hyperrectangle(centre, f, -1, 0, extras, lb, ub, np.inf)
         parents = np.array([elite])
         archive, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
     
-    _divide_hrect = _divide_vec if vectorizable is True else _divide_mp
+    if vectorizable:
+        if extra_output:
+            _divide_hrect = _divide_vec 
+        else: 
+            _divide_hrect = _divide_vec_extra
+    else: 
+        if extra_output:
+            _divide_hrect = _divide_mp_extra
+        else:
+            _divide_hrect = _divide_mp
     i, conv_count, miter_adj, mfev_adj = 0, 0, 0, 0
     fev = 1
     
@@ -374,7 +453,7 @@ def Direct(
             # split all hrects to be split from previous iteration
             new_hrects = np.array([hrect for parent in 
                                    tqdm(parents, desc=f'it {i} - #hrects: {len(parents)}. Evaluating Rectangles', leave=False)
-                                   for hrect in _divide_hrect(func, parent, dims, f_args, log_min_l)])
+                                   for hrect in _divide_hrect(func, parent, dims, f_args, log_min_l, nextras)])
             print(' ', end='\r', flush=True)
             print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles...', end='\r', flush=True)
             fev += len(new_hrects)
@@ -397,14 +476,16 @@ def Direct(
                 if len(parents) > 0:
                     with open(printfile+'-parents-temp.csv', 'a', newline='') as csvfile:
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents]), 
-                                                    np.array([h.centre for h in parents])), 
-                                                    axis=1)
+                                                   np.array([h.extras for h in parents]),
+                                                   np.array([h.centre for h in parents])), 
+                                                   axis=1)
                         writer(csvfile).writerows(printout)
                 with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
                     if len(childless) > 0: # we want to overwrite file with blank if childless is empty
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
-                                                    np.array([h.centre for h in childless])), 
-                                                    axis=1)
+                                                   np.array([h.extras for h in childless]),
+                                                   np.array([h.centre for h in childless])), 
+                                                   axis=1)
                         writer(csvfile).writerows(printout)
                 del printout
                 for f in ('parents', 'children'):
@@ -570,6 +651,7 @@ def Direct(
                 with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
                     if len(childless) > 0: # we want to overwrite file with blank if childless is empty
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
+                                                   np.array([h.centre for h in childless]),
                                                    np.array([h.centre for h in childless])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
@@ -578,6 +660,7 @@ def Direct(
                     resolved = np.concatenate((landlocked_resolved, edge_resolved))
                     if len(resolved) > 0:
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in resolved]), 
+                                                   np.array([h.extras for h in resolved]),
                                                    np.array([h.centre for h in resolved])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
@@ -679,7 +762,6 @@ def Direct(
                             sortrectangles(list(edge_resolved[near_optimal_resolved]), 
                                             list(childless[eligible*~timer_mask]))))
 
-                    print('Done.', end ='\r', flush=True)
                     print(' '*160, end='\r', flush=True)
                     
                     eligible[eligible == True] = new_accepted
@@ -715,6 +797,7 @@ def Direct(
             with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
                 if len(archive) > 0:
                     printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in archive]), 
+                                               np.array([h.extras for h in archive]),
                                                np.array([h.centre for h in archive])), 
                                                axis=1)
                     writer(csvfile).writerows(printout)
@@ -723,14 +806,14 @@ def Direct(
             shutil.copyfile(printfile+'-children-temp.csv', printfile+'-children.csv')
             os.remove(printfile+'-children-temp.csv')
 
-            print(' '*100, end='\r', flush=True)
+            print(' '*150, end='\r', flush=True)
         
         miter_adj += i
         mfev_adj += fev
         print(f'{"-"*50}\nprogram step\n{"-"*50}', flush=True)
 
     print('\n')
-    return DirectResult(elite.centre, elite.f, fev, i, 
+    return DirectResult(elite.centre, elite.extras, elite.f, fev, i, 
                           elite.lb, elite.ub, elite.volume, elite.volume/total_vol)                  
 
 @njit
@@ -836,7 +919,7 @@ def _reconstruct_from_centre(centres, bounds, maxres=2**31):
     return centres, lbs, ubs
     
 
-def _restart(restart, bounds, disp):
+def _restart(restart, bounds, nextras, disp):
     print('Restarting optimisation where',restart,'left off.')
     history = np.genfromtxt(restart+'-children.csv', delimiter=',', dtype=np.float64)
     try: 
@@ -852,20 +935,20 @@ def _restart(restart, bounds, disp):
     except FileNotFoundError:
         pmin, pminidx= np.inf, None
         warnings.warn("Warning: No parents file found.", UserWarning)
-    fs, xs = history[:,:3], history[:,3:]
+    fs, exs, xs = history[:,:3], history[:,3:3+nextras], history[:,3+nextras:]
     
     xs, lbs, ubs = _reconstruct_from_centre(xs, bounds)
 
     if fs[:,0].min() < pmin:
         elite = fs[:,0].argmin()
-        elite = hyperrectangle(xs[elite], *fs[elite], lbs[elite], ubs[elite], np.nan)
+        elite = hyperrectangle(xs[elite], *fs[elite], exs[elite], lbs[elite], ubs[elite], np.nan)
     else: 
-        fps, xps = parents[:,:3], parents[:,3:]
+        fps, exps, xps = parents[:,:3], parents[:,3:3+nextras:], parents[:,3+nextras:]
         xps, lbps, ubps = _reconstruct_from_centre(np.atleast_2d(xps[pminidx, :]), bounds)
-        elite = hyperrectangle(xps[0,:], *fps[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
+        elite = hyperrectangle(xps[0,:], exs[pminidx,:], *fps[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
         del fps, xps, lbps, ubps, parents
 
-    archive = np.array([hyperrectangle(xs[i], *fs[i,:], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
+    archive = np.array([hyperrectangle(xs[i],*fs[i,:],  exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
     
 # =============================================================================
 # Child-wise loop is faster 
@@ -902,9 +985,9 @@ def _restart(restart, bounds, disp):
 
 
 @njit(parallel=True)
-def _child_loop(xs, fs, lbs, ubs):
+def _child_loop(xs, exs, fs, lbs, ubs):
     start = cclock()
-    archive = [hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(xs))]
+    archive = [hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))]
     expected_evals = (len(xs)-1)*(len(xs))/2 #no parents found ever 
     
     for i in range(len(xs)-1, -1, -1):
@@ -931,9 +1014,9 @@ def _child_loop(xs, fs, lbs, ubs):
     return archive
     
 @njit
-def _parent_loop(xs, fs, lbs, ubs):
+def _parent_loop(xs, exs, fs, lbs, ubs):
     start = cclock()
-    archive = [hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
+    archive = [hyperrectangle(xs[i], fs[i,0], fs[i,1], fs[i,2], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(fs))]
     parents_i = []
     for i in range(len(archive)):
         if i%10000 == 0 and i != 0: 
@@ -959,8 +1042,9 @@ def _factor2(n):
     return 2**i
     
 class DirectResult:
-    def __init__(self, x, f, nfev, nit, lb, ub, volume, vratio):
+    def __init__(self, x, extras, f, nfev, nit, lb, ub, volume, vratio):
         self.x = x
+        self.extras = extras
         self.f = f 
         self.nfev = nfev
         self.nit = nit

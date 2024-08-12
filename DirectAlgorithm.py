@@ -656,7 +656,7 @@ def Direct(
                 with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
                     if len(childless) > 0: # we want to overwrite file with blank if childless is empty
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
-                                                   np.array([h.centre for h in childless]),
+                                                   np.array([h.extras for h in childless]),
                                                    np.array([h.centre for h in childless])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)

@@ -65,7 +65,7 @@ class hyperrectangle():
         self.centre = centre
         self.ndim = len(centre)
 
-        self.f, self.parent_f = float(f), parent_f
+        self.f, self.parent_f = f, parent_f
         self.lb, self.ub = lb, ub
         # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
         self.generation = generation
@@ -950,7 +950,7 @@ def _restart(restart, bounds, nextras, disp):
     else: 
         fps, exps, xps = parents[:,:3], parents[:,3:3+nextras:], parents[:,3+nextras:]
         xps, lbps, ubps = _reconstruct_from_centre(np.atleast_2d(xps[pminidx, :]), bounds)
-        elite = hyperrectangle(xps[0,:], exs[pminidx,:], *fps[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
+        elite = hyperrectangle(xps[0,:], *fps[pminidx,:], exs[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
         del fps, xps, lbps, ubps, parents
 
     archive = np.array([hyperrectangle(xs[i],*fs[i,:],  exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])

@@ -376,7 +376,6 @@ def Direct(
         nextras = 0
     
     if restart != '': 
-        
         archive, elite = _restart(restart, bounds, nextras, disp)
         parents, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         archive = np.array(archive)
@@ -513,14 +512,13 @@ def Direct(
             len_allresolved = np.uint64(len_allresolved)
             ler=np.uint64(len(edge_resolved))
 
-
             #choose which method to use based on approximate no. of comparisons required
             if resolved_mask.sum() > 0 and recalc_resolved is True:
                 print(' ', end = '\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part1). Estimated time: ', end='', flush=True)  
 
                 if r_m_sum*len_allresolved < r_m_sum*conj_r_m_sum:
-                    if r_m_sum <= cpu_count()*14 or r_m_sum*len_allresolved < 50e10 / ndim:
+                    if r_m_sum <= cpu_count()*30 or r_m_sum*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='', flush=True)
                         llresolved_mask = landlocked_bysum(
                             list(childless[resolved_mask]),
@@ -529,7 +527,7 @@ def Direct(
                                                  edge_resolved))),
                         bounds)
                     else: 
-                        time_test_range = cpu_count()*7
+                        time_test_range = cpu_count()*15
                         
                         timer_mask = np.zeros(len(resolved_mask), dtype=np.bool_)
                         timer_mask[:_find_bool_indx(resolved_mask, time_test_range)+1] = True
@@ -553,13 +551,13 @@ def Direct(
                                                      edge_resolved))),
                             bounds)))                    
                 else: 
-                    if r_m_sum <= cpu_count()*14 or r_m_sum*len_allresolved < 50e10 / ndim:
+                    if r_m_sum <= cpu_count()*30 or r_m_sum*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='', flush=True)
                         llresolved_mask = landlocked_bycontra(
                             list(childless[resolved_mask]),
                             list(childless[~resolved_mask]))
                     else: 
-                        time_test_range = cpu_count()*7
+                        time_test_range = cpu_count()*15
                         
                         timer_mask = np.zeros(len(resolved_mask), dtype=np.bool_)
                         timer_mask[:_find_bool_indx(resolved_mask, time_test_range)+1] = True
@@ -583,7 +581,7 @@ def Direct(
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part2). Estimated time: ', end='', flush=True)  
 
                 if ler*len_allresolved < ler*conj_r_m_sum:
-                    if ler <= cpu_count()*25 or ler*len_allresolved < 50e10 / ndim:
+                    if ler <= cpu_count()*30 or ler*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='\r', flush=True)
                         lledge_mask = landlocked_bysum(
                             list(edge_resolved),
@@ -612,7 +610,7 @@ def Direct(
                                                      edge_resolved))),
                             bounds)))                    
                 else: 
-                    if ler <= cpu_count()*25 or ler*len_allresolved < 50e10 / ndim:
+                    if ler <= cpu_count()*30 or ler*len_allresolved < 50e10 / ndim:
                         print('< a few minutes. ', end ='\r', flush=True)
                         lledge_mask = landlocked_bycontra(
                             list(edge_resolved),
@@ -792,7 +790,7 @@ def Direct(
             archive = childless[~new_accepted]
             # old parents are forgotten
             parents = childless[new_accepted]
-            
+
             i+=1
         archive = np.concatenate((archive, landlocked_resolved, edge_resolved))
         if printfile != '':
@@ -933,7 +931,7 @@ def _restart(restart, bounds, nextras, disp):
             history = np.vstack((history, np.atleast_2d(resolved)))
         del resolved
     except FileNotFoundError:
-        pass
+        warnings.warn("Warning: No resolved file found.", UserWarning)
     try: 
         parents = np.genfromtxt(restart+'-parents.csv', delimiter=',', dtype=np.float64)
         pmin, pminidx = parents[:,0].min(), parents[:,0].argmin()
@@ -943,17 +941,19 @@ def _restart(restart, bounds, nextras, disp):
     fs, exs, xs = history[:,:3], history[:,3:3+nextras], history[:,3+nextras:]
     
     xs, lbs, ubs = _reconstruct_from_centre(xs, bounds)
+    del history
 
-    if fs[:,0].min() < pmin:
-        elite = fs[:,0].argmin()
-        elite = hyperrectangle(xs[elite], *fs[elite], exs[elite], lbs[elite], ubs[elite], np.nan)
+    fmin, fmini = fs[:,0].min(), fs[:,0].argmin()
+    archive = np.array([hyperrectangle(xs[i],*fs[i,:], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
+
+    if fmin < pmin:
+        elite = archive[fmini]
+        del xs, fs, exs, lbs, ubs
     else: 
         fps, exps, xps = parents[:,:3], parents[:,3:3+nextras:], parents[:,3+nextras:]
         xps, lbps, ubps = _reconstruct_from_centre(np.atleast_2d(xps[pminidx, :]), bounds)
         elite = hyperrectangle(xps[0,:], *fps[pminidx,:], exs[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
         del fps, xps, lbps, ubps, parents
-
-    archive = np.array([hyperrectangle(xs[i],*fs[i,:],  exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
     
 # =============================================================================
 # Child-wise loop is faster 

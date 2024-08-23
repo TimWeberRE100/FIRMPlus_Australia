@@ -45,81 +45,93 @@ else:
 
 spec = [
     ('centre', float64[:]),
-    ('ndim', int64),
+    # ('ndim', int64),
     ('f', float64),
     ('extras', float64[:]),
     ('parent_f', float64),
-    ('lb', float64[:]),
-    ('ub', float64[:]),
+    # ('lb', float64[:]),
+    # ('ub', float64[:]),
+    ('half_length', float64[:]),
     # ('rdif', float64),
     # ('adif', float64),
     ('generation', int64),
     ('cuts', int64),
     ('volume', float64),
-    ('length_inds', float64[:]),
+    # ('length_inds', float64[:]),
     ]
 
 @jitclass(spec)
 class hyperrectangle():
     def __init__(self, centre, f, generation, cuts, extras, lb, ub, parent_f):
         self.centre = centre
-        self.ndim = len(centre)
+        # self.ndim = len(centre)
 
         self.f, self.parent_f = f, parent_f
-        self.lb, self.ub = lb, ub
+        # self.lb, self.ub = lb, ub
+        self.half_length = (ub-lb)/2
         # self.rdif, self.adif = self.f/self.parent_f, self.f-self.parent_f
         self.generation = generation
         self.cuts = cuts
-        self.volume = (self.ub-self.lb).prod()
-        self.length_inds = np.log10(self.ub-self.lb)
+        self.volume = (ub-lb).prod()
+        # self.length_inds = np.log10(self.ub-self.lb)
         self.extras = extras
 
 @njit
-def hrect_is_semibarren(h, dims, log_min_l):
-    return (h.length_inds < log_min_l)[dims].prod() == 1
+def hrect_is_semibarren(h, dims, min_half_length):
+    return (h.half_length < min_half_length)[dims].prod() == 1
 
 @njit
-def hrect_is_barren(h, log_min_l):
-    return (h.length_inds < log_min_l).prod() == 1
+def hrect_is_barren(h, min_half_length):
+    return (h.half_length < min_half_length).prod() == 1
 
 @njit
-def hrect_is_parent(lb1, ub1, lb2, ub2, tol=1e-10):
+def hrect_is_parent(h1, h2, tol=1e-10):
     """
     checks if a hyperrectangle is a (grand)parent of another
     h1 is prospective parent, h2 is prospective child
     
     Note: returns True is h1 is a (grand)parent of h2 OR if h1==h2
     """
+    lb1, ub1 = h1.centre - h1.half_length, h1.centre + h1.half_length
+    lb2, ub2 = h2.centre - h2.half_length, h2.centre + h2.half_length
+
     ub_bounded = (ub1 - ub2 >= -tol).prod() == 1
     lb_bounded = (lb1 - lb2 <= tol).prod() == 1
     return ub_bounded and lb_bounded
 
 @njit
 def hrects_is_same(h1, h2):
-    ub_same = (h1.ub == h2.ub).prod() == 1 
-    lb_same = (h1.lb == h2.lb).prod() == 1 
-    c_same = (h1.centre == h2.centre).prod() == 1
-    f_same = h1.f == h2.f
+    lb1, ub1 = h1.centre - h1.half_length, h1.centre + h1.half_length
+    lb2, ub2 = h2.centre - h2.half_length, h2.centre + h2.half_length
+    
+    ub_same = np.abs(ub1 - ub2).sum() < 1e-6
+    lb_same = np.abs(lb1 - lb2).sum() < 1e-6
+    c_same = np.abs(h1.centre - h2.centre).sum() < 1e-6
+    f_same = abs(h1.f - h2.f) < 1e-6
     return ub_same and lb_same and c_same and f_same
 
 @njit
 def hrects_border(h1, h2, tol = 1e-12):
     # First test is redundant but filters out obivous non-borders fast 
     # the domains in each direction touch   
-    if (((h2.ub - h1.lb) >= -tol) * 
-        ((h1.ub - h2.lb) >= -tol)# directions where the domains of each h2 touch
-        ).sum() != h1.ndim:
+    lb1, ub1 = h1.centre - h1.half_length, h1.centre + h1.half_length
+    lb2, ub2 = h2.centre - h2.half_length, h2.centre + h2.half_length
+    ndim = len(lb1)
+    
+    if (((ub2 - lb1) >= -tol) * 
+        ((ub1 - lb2) >= -tol)# directions where the domains of each h2 touch
+        ).sum() != ndim:
         return False        
 
     # in ndim-1 directions the directions' domains overlap (either perfectly, or one inside another)
-    overlap = (signs_of_array(h2.ub - h1.ub, tol) ==
-                signs_of_array(h1.lb - h2.lb, tol))
-    if overlap.sum() != h1.ndim-1:
+    overlap = (signs_of_array(ub2 - ub1, tol) ==
+                signs_of_array(lb1 - lb2, tol))
+    if overlap.sum() != ndim-1:
         return False
 
     # adjacent (ub=lb or lb=ub) (higher OR lower) in exactly one dimension
-    adjacency = ((np.abs(h2.ub - h1.lb) < tol) +
-                 (np.abs(h2.lb - h1.ub) < tol)) 
+    adjacency = ((np.abs(ub2 - lb1) < tol) +
+                 (np.abs(lb2 - ub1) < tol)) 
     if adjacency.sum() != 1:
         return False
 
@@ -128,7 +140,7 @@ def hrects_border(h1, h2, tol = 1e-12):
         return False
     
     # Rectangles are the same
-    if (h1.ub != h2.ub).sum() + (h1.lb != h2.lb).sum() == 0:
+    if (ub1 != ub2).sum() + (lb1 != lb2).sum() == 0:
         return False
     
     return True
@@ -152,11 +164,13 @@ def _generate_boolmatrix(ndim):
 
 @njit #parallel is slower for ndim range
 def _generate_bounds(hrect, indcs, dims):
-    lc = np.hstack((np.atleast_2d(hrect.lb).T, np.atleast_2d(hrect.centre).T))[dims,:]
-    cu = np.hstack((np.atleast_2d(hrect.centre).T, np.atleast_2d(hrect.ub).T))[dims,:]
+    lb, ub = hrect.centre - hrect.half_length, hrect.centre + hrect.half_length
     
-    lbs = np.repeat(hrect.lb, len(indcs)).reshape((len(hrect.lb), len(indcs))).T
-    ubs = np.repeat(hrect.ub, len(indcs)).reshape((len(hrect.ub), len(indcs))).T
+    lc = np.hstack((np.atleast_2d(lb).T, np.atleast_2d(hrect.centre).T))[dims,:]
+    cu = np.hstack((np.atleast_2d(hrect.centre).T, np.atleast_2d(ub).T))[dims,:]
+    
+    lbs = np.repeat(lb, len(indcs)).reshape((len(lb), len(indcs))).T
+    ubs = np.repeat(ub, len(indcs)).reshape((len(ub), len(indcs))).T
     
     for i in prange(len(indcs)):
         base = np.empty((len(dims), 2), dtype=np.float64)
@@ -169,8 +183,10 @@ def _generate_bounds(hrect, indcs, dims):
 
 @njit #parallel is slower for ndim range
 def _generate_centres(hrect, indcs, dims):
-    l = (hrect.lb + hrect.centre)[dims]/2
-    u = (hrect.centre + hrect.ub)[dims]/2
+    lb, ub = hrect.centre - hrect.half_length, hrect.centre + hrect.half_length
+
+    l = (lb + hrect.centre)[dims]/2
+    u = (hrect.centre + ub)[dims]/2
     
     centres = np.repeat(hrect.centre, len(indcs)).reshape((len(hrect.centre), len(indcs))).T
     for i in prange(len(indcs)):
@@ -183,9 +199,9 @@ def _generate_centres(hrect, indcs, dims):
 
 
 @njit
-def _divide_vec(func, hrect, dims, f_args, log_min_l, nextras):
+def _divide_vec(func, hrect, dims, f_args, min_half_length, nextras):
     # do not split along resolution axes
-    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
+    dims = dims[(hrect.half_length >= min_half_length)[dims]]
     l_dim=len(dims)
     if l_dim == 0:
         # do not lose hrect - may be splittable along different axis
@@ -206,9 +222,9 @@ def _divide_vec(func, hrect, dims, f_args, log_min_l, nextras):
     return hrects
 
 @njit
-def _divide_vec_extra(func, hrect, dims, f_args, log_min_l, nextras):
+def _divide_vec_extra(func, hrect, dims, f_args, min_half_length, nextras):
     # do not split along resolution axes
-    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
+    dims = dims[(hrect.half_length >= min_half_length)[dims]]
     l_dim=len(dims)
     if l_dim == 0:
         # do not lose hrect - may be splittable along different axis
@@ -230,9 +246,9 @@ def _divide_vec_extra(func, hrect, dims, f_args, log_min_l, nextras):
     return hrects
 
 @njit(parallel=True)
-def _divide_mp(func, hrect, dims, f_args, log_min_l, nextras):
+def _divide_mp(func, hrect, dims, f_args, min_half_length, nextras):
     # do not split along resolution axes
-    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
+    dims = dims[(hrect.half_length >= min_half_length)[dims]]
     l_dim=len(dims)
     if l_dim == 0:
         # do not lose hrect 
@@ -254,9 +270,9 @@ def _divide_mp(func, hrect, dims, f_args, log_min_l, nextras):
     return hrects
 
 @njit(parallel=True)
-def _divide_mp_extra(func, hrect, dims, f_args, log_min_l, nextras):
+def _divide_mp_extra(func, hrect, dims, f_args, min_half_length, nextras):
     # do not split along resolution axes
-    dims = dims[(hrect.length_inds >= log_min_l)[dims]]
+    dims = dims[(hrect.half_length >= min_half_length)[dims]]
     l_dim=len(dims)
     if l_dim == 0:
         # do not lose hrect 
@@ -415,8 +431,11 @@ def Direct(
     fev = 1
     
     program = ({},) if program is None else program
-    for step in program:
+    for s, step in enumerate(program):
         keys = step.keys()
+        setdiff = set(keys) - set(('f_args', 'maxiter', 'maxfev', 'rect_dim', 'population',
+                                  'resolution', 'locally_biased', 'near_optimal'))
+        assert setdiff == set(), f"invalid program keywords: {list(setdiff)}"
         f_args = step['f_args'] if 'f_args' in keys else f_args
         maxiter = step['maxiter'] if 'maxiter' in keys else maxiter
         maxfev = step['maxfev'] if 'maxfev' in keys else maxfev
@@ -426,25 +445,22 @@ def Direct(
         locally_biased = step['locally_biased'] if 'locally_biased' in keys else locally_biased
         near_optimal = step['near_optimal'] if 'near_optimal' in keys else near_optimal
 
-        recalc_resolved=True if 'resolution' in keys else False
+        recalc_resolved=True if 'resolution' in keys or s==0 else False
             
-
         rect_dim = len(lb) if rect_dim==-1 else rect_dim
         assert rect_dim <= ndim
         dims = np.arange(rect_dim, dtype=np.int64)
         conv_max = ndim // rect_dim + min(1, ndim%rect_dim)
 
-        log_min_l = np.log10(resolution)
+        min_half_length = resolution/2.
         total_vol = (ub-lb).prod()
         landlocked_resolved, edge_resolved = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
-        # near_optimal_res = True
         conv_count = 0
         
         while (i < maxiter+miter_adj # stop at max iterations
                and fev < maxfev+mfev_adj  # stop at max function evaluations
                and conv_count < conv_max # stop when no improvement to best (locally biased)
                and total_vol > 0 # stop when resolution fully resolved
-               # and near_optimal_res # no more near_optimal space within resolution
             ): 
 
             it_start = dt.datetime.now()
@@ -452,7 +468,7 @@ def Direct(
             # split all hrects to be split from previous iteration
             new_hrects = np.array([hrect for parent in 
                                    tqdm(parents, desc=f'it {i} - #hrects: {len(parents)}. Evaluating Rectangles', leave=False)
-                                   for hrect in _divide_hrect(func, parent, dims, f_args, log_min_l, nextras)])
+                                   for hrect in _divide_hrect(func, parent, dims, f_args, min_half_length, nextras)])
             print(' ', end='\r', flush=True)
             print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles...', end='\r', flush=True)
             fev += len(new_hrects)
@@ -503,7 +519,7 @@ def Direct(
                 elite = gen_elite
     
             # maximum resolution rectangles 
-            resolved_mask = _semibarren_speedup(list(childless), np.ones(ndim, dtype=np.bool_), log_min_l)
+            resolved_mask = _semibarren_speedup(list(childless), np.ones(ndim, dtype=np.bool_), min_half_length)
             total_vol -= sum([h.volume for h in childless[resolved_mask]])
             
             len_allresolved = resolved_mask.sum() + len(edge_resolved) + len(landlocked_resolved)
@@ -692,27 +708,28 @@ def Direct(
             best = fs[nearoptimalmask] 
 
             if locally_biased is True:
-                best = best[:min(population, len(best))]
-                # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
-                prev_bests = childless[best]
-                new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
-                                         if hrects_border(b, hrect) 
-                                         and not hrect_is_barren(hrect, log_min_l)], dtype=np.int64)
-                # combine new and archived hrects to be split next iteration
-                new_accepted = np.unique(np.concatenate((best, new_accepted)))
-                # get list-indices of childless hrects which are not to be split
-                to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
+                raise NotImplementedError("locally_biased=True has not been updated.")
+                # best = best[:min(population, len(best))]
+                # # Triggers termination if the best rectangles all stay the same for the full rotation of splitting axes
+                # prev_bests = childless[best]
+                # new_accepted = np.array([j for b in childless[best] for j, hrect in enumerate(childless) 
+                #                          if hrects_border(b, hrect) 
+                #                          and not hrect_is_barren(hrect, min_half_length)], dtype=np.int64)
+                # # combine new and archived hrects to be split next iteration
+                # new_accepted = np.unique(np.concatenate((best, new_accepted)))
+                # # get list-indices of childless hrects which are not to be split
+                # to_arch = np.setdiff1d(np.arange(len(childless)), new_accepted, assume_unique=True)
                 
-                if i>0: 
-                    sames = [hrects_is_same(childless[best][j], prev_bests[j]) for j in range(len(prev_bests))]
-                    if (sum(sames) == population):
-                        conv_count += 1
-                    else: 
-                        conv_count = 0 
+                # if i>0: 
+                #     sames = [hrects_is_same(childless[best][j], prev_bests[j]) for j in range(len(prev_bests))]
+                #     if (sum(sames) == population):
+                #         conv_count += 1
+                #     else: 
+                #         conv_count = 0 
                 
-                # rotate splitting axes
-                dims += rect_dim 
-                dims %= ndim
+                # # rotate splitting axes
+                # dims += rect_dim 
+                # dims %= ndim
             else: 
                 # rotate splitting axes
                 dims += rect_dim 
@@ -720,7 +737,7 @@ def Direct(
                 
                 if len(best)>0:
                     # list indices of best rectangles which are semibarren
-                    best_semibarr = best[_semibarren_speedup(list(childless[best]), dims, log_min_l)]
+                    best_semibarr = best[_semibarren_speedup(list(childless[best]), dims, min_half_length)]
                     
                     best = np.setdiff1d(best, best_semibarr, assume_unique=True)
                     best = best[:min(len(best), population)]
@@ -740,7 +757,7 @@ def Direct(
 
                 if near_optimal_resolved.sum()>0:
                     eligible = np.ones(len(childless), dtype=np.bool_)
-                    eligible[_semibarren_speedup(list(childless[eligible]), dims, log_min_l)] = False
+                    eligible[_semibarren_speedup(list(childless[eligible]), dims, min_half_length)] = False
                     if eligible.sum() > 0:
                         eligible[_borderheuristic(list(childless[eligible]), 
                                                   list(edge_resolved[near_optimal_resolved]))] = False
@@ -817,7 +834,8 @@ def Direct(
 
     print('\n')
     return DirectResult(elite.centre, elite.extras, elite.f, fev, i, 
-                          elite.lb, elite.ub, elite.volume, elite.volume/total_vol)                  
+                        elite.centre-elite.half_length, elite.centre+elite.half_length,
+                        elite.volume, elite.volume/total_vol)                  
 
 @njit
 def _find_bool_indx(mask, count):
@@ -834,7 +852,7 @@ def _find_bool_indx(mask, count):
 def _sub_landlocked_bysum(h, pool, bounds):
     """ Returns True if h is landlocked by pool """
     """ Assumes h is of the smallest resolution in archive """
-    faces = h.ndim*2 - (h.lb == bounds[0]).sum() - (h.ub == bounds[1]).sum()
+    faces = len(h.centre)*2 - (h.centre-h.half_length == bounds[0]).sum() - (h.centre+h.half_length == bounds[1]).sum()
     for h2 in pool:
         if hrects_border(h, h2):
             faces -= 1 
@@ -865,10 +883,10 @@ def landlocked_bycontra(eligible, unresolved):
     return accepted
 
 @njit(parallel=True)
-def _semibarren_speedup(rects, dims, log_min_l):
+def _semibarren_speedup(rects, dims, min_half_length):
     accepted = np.empty(len(rects), dtype=np.bool_)
     for i in prange(len(rects)):
-        accepted[i] = hrect_is_semibarren(rects[i], dims, log_min_l)
+        accepted[i] = hrect_is_semibarren(rects[i], dims, min_half_length)
     return accepted
 
 @njit(parallel=True)
@@ -889,12 +907,13 @@ def _borderheuristic(rects, best):
     maxub = -np.inf*np.ones(best[0].ndim, dtype=np.float64)
     
     for i in range(len(best)): 
-        minlb = np.minimum(minlb, best[i].lb)
-        maxub = np.maximum(maxub, best[i].ub)
+        minlb = np.minimum(minlb, best[i].centre-best[i].half_length)
+        maxub = np.maximum(maxub, best[i].centre+best[i].half_length)
     
     accepted = np.empty(len(rects), dtype=np.bool_)
     for i in prange(len(rects)):
-        accepted[i] = ((rects[i].lb >= maxub).sum() + (rects[i].ub <= minlb).sum() > 1)
+        accepted[i] = ((rects[i].centre-rects[i].half_length >= maxub).sum() + 
+                       (rects[i].centre+rects[i].half_length <= minlb).sum() > 1)
 
     return accepted
     
@@ -944,15 +963,16 @@ def _restart(restart, bounds, nextras, disp):
     del history
 
     fmin, fmini = fs[:,0].min(), fs[:,0].argmin()
-    archive = np.array([hyperrectangle(xs[i],*fs[i,:], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
-
+    archive = np.array([hyperrectangle(xs[i], *fs[i,:], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
+    lxs = len(xs)
+    
     if fmin < pmin:
         elite = archive[fmini]
         del xs, fs, exs, lbs, ubs
     else: 
         fps, exps, xps = parents[:,:3], parents[:,3:3+nextras:], parents[:,3+nextras:]
         xps, lbps, ubps = _reconstruct_from_centre(np.atleast_2d(xps[pminidx, :]), bounds)
-        elite = hyperrectangle(xps[0,:], *fps[pminidx,:], exs[pminidx,:], lbps[0,:], ubs[0,:], np.nan)
+        elite = hyperrectangle(xps[0,:], *fps[pminidx,:], exps[pminidx,:], lbps[0,:], ubps[0,:], np.nan)
         del fps, xps, lbps, ubps, parents
     
 # =============================================================================
@@ -983,7 +1003,7 @@ def _restart(restart, bounds, nextras, disp):
 # =============================================================================
     
     if disp is True:
-        print(f'Restart: read in {len(xs)} rectangles. Discarded {len(xs)-len(archive)} parents.',
+        print(f'Restart: read in {lxs} rectangles. Discarded {lxs-len(archive)} parents.',
               f'Best value: {elite.f}.')
   
     return archive, elite
@@ -1011,7 +1031,7 @@ def _child_loop(xs, exs, fs, lbs, ubs):
         to_del = []
         for j in prange(len(xs)-i, len(xs)):
             j = len(xs)-(j+1)
-            if hrect_is_parent(archive[j].lb, archive[j].ub, h1.lb, h1.ub):
+            if hrect_is_parent(archive[j], h1):
                 to_del.append(j)
         to_del.sort(reverse=True)
         for j in to_del:
@@ -1032,7 +1052,7 @@ def _parent_loop(xs, exs, fs, lbs, ubs):
             print(f'{i}/{len(fs)}. Time: {h}:{m}:{s}. Remaining: < {rh}:{rm}:{rs}')
         h1 = archive[i]
         for j in prange(i+1, len(archive)):
-            if hrect_is_parent(h1.lb, h1.ub, archive[j].lb, archive[j].ub):
+            if hrect_is_parent(h1, archive[j]):
                 parents_i.append(i)
                 break
     return parents_i

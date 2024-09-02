@@ -6,6 +6,7 @@ Created on Thu Apr 18 08:28:16 2024
 """
 
 import numpy as np 
+import pandas as pd
 from numba import njit, prange, float64, int64, objmode
 from numba.experimental import jitclass
 import datetime as dt
@@ -392,6 +393,8 @@ def Direct(
         nextras = 0
     
     if restart != '': 
+        # min_half_length = program[0]['resolution']
+        # deresolve(restart, bounds, nextras, min_half_length, printfile)
         archive, elite = _restart(restart, bounds, nextras, disp)
         parents, prev_bests = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         archive = np.array(archive)
@@ -454,8 +457,10 @@ def Direct(
 
         min_half_length = resolution/2.
         total_vol = (ub-lb).prod()
-        landlocked_resolved, edge_resolved = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
+        landlocked_resolved, edge_resolved, resolved = np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle), np.array([], dtype=hyperrectangle)
         conv_count = 0
+
+        
         
         while (i < maxiter+miter_adj # stop at max iterations
                and fev < maxfev+mfev_adj  # stop at max function evaluations
@@ -473,44 +478,16 @@ def Direct(
             print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles...', end='\r', flush=True)
             fev += len(new_hrects)
     
-            if len(new_hrects) > 1: 
+            if len(new_hrects) > 0: 
+                writeout=True
                 recalc_resolved = True
+            else: 
+                writeout=False
     
             # all hrects which do not have any children  
             childless = np.concatenate((new_hrects, archive))
             del new_hrects, archive #reduce memory load
     
-            if printfile != '':
-                print(' ', end='\r', flush=True)
-                print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
-
-                for f in ('parents', 'children'):
-                    #copy files as temps
-                    shutil.copyfile(f'{printfile}-{f}.csv', f'{printfile}-{f}-temp.csv')
-
-                if len(parents) > 0:
-                    with open(printfile+'-parents-temp.csv', 'a', newline='') as csvfile:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents]), 
-                                                   np.array([h.extras for h in parents]),
-                                                   np.array([h.centre for h in parents])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
-                with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
-                    if len(childless) > 0: # we want to overwrite file with blank if childless is empty
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
-                                                   np.array([h.extras for h in childless]),
-                                                   np.array([h.centre for h in childless])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
-                del printout
-                for f in ('parents', 'children'):
-                    #replace files with temps
-                    shutil.copyfile(f'{printfile}-{f}-temp.csv', f'{printfile}-{f}.csv')
-                    os.remove(f'{printfile}-{f}-temp.csv')
-
-                print(' '*160, end='\r', flush=True)
-
-
             # generate array of list-index, cost
             fvs = np.array([(j, h.f) for j, h in enumerate(childless)], dtype=np.float64)
             gen_elite = childless[int(fvs[fvs[:,1].argmin(), 0])]
@@ -521,7 +498,43 @@ def Direct(
             # maximum resolution rectangles 
             resolved_mask = _semibarren_speedup(list(childless), np.ones(ndim, dtype=np.bool_), min_half_length)
             total_vol -= sum([h.volume for h in childless[resolved_mask]])
-            
+
+            if printfile != '' and writeout==True:
+                print(' ', end='\r', flush=True)
+                print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
+
+                shutil.copyfile(f'{printfile}-parents.csv', f'{printfile}-parents-temp.csv')
+
+                if len(parents) > 0:
+                    with open(printfile+'-parents-temp.csv', 'a', newline='') as csvfile:
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents]), 
+                                                   np.array([h.extras for h in parents]),
+                                                   np.array([h.centre for h in parents])), 
+                                                   axis=1)
+                        writer(csvfile).writerows(printout)
+                with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
+                    if (~resolved_mask).sum() > 0: # we want to overwrite file with blank if childless is empty
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless[~resolved_mask]]), 
+                                                   np.array([h.extras for h in childless[~resolved_mask]]),
+                                                   np.array([h.centre for h in childless[~resolved_mask]])), 
+                                                   axis=1)
+                        writer(csvfile).writerows(printout)
+                with open(printfile+'-resolved-temp.csv', 'w', newline='') as csvfile:
+                    if resolved_mask.sum() > 0:  # we want to overwrite file with blank if resolved is empty
+                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless[resolved_mask]]), 
+                                                   np.array([h.extras for h in childless[resolved_mask]]),
+                                                   np.array([h.centre for h in childless[resolved_mask]])), 
+                                                   axis=1)
+                        writer(csvfile).writerows(printout)
+
+                del printout
+                for f in ('parents', 'children', 'resolved'):
+                    #replace files with temps
+                    shutil.copyfile(f'{printfile}-{f}-temp.csv', f'{printfile}-{f}.csv')
+                    os.remove(f'{printfile}-{f}-temp.csv')
+
+                print(' '*160, end='\r', flush=True)
+          
             len_allresolved = resolved_mask.sum() + len(edge_resolved) + len(landlocked_resolved)
             r_m_sum = np.uint64(resolved_mask.sum())
             conj_r_m_sum = np.uint64((~resolved_mask).sum())
@@ -535,7 +548,7 @@ def Direct(
 
                 if r_m_sum*len_allresolved < r_m_sum*conj_r_m_sum:
                     if r_m_sum <= cpu_count()*30 or r_m_sum*len_allresolved < 50e10 / ndim:
-                        print('< a few minutes. ', end ='', flush=True)
+                        print('< a few minutes. ', end ='\r', flush=True)
                         llresolved_mask = landlocked_bysum(
                             list(childless[resolved_mask]),
                             list(np.concatenate((childless[resolved_mask], 
@@ -650,6 +663,9 @@ def Direct(
             else: 
                 lledge_mask = np.array([], dtype=np.bool_)
             recalc_resolved=False
+            resolved = np.concatenate((resolved, 
+                                       childless[resolved_mask]))
+
             landlocked_resolved = np.concatenate((landlocked_resolved,
                                                   edge_resolved[lledge_mask],
                                                   childless[resolved_mask][llresolved_mask]))
@@ -657,42 +673,10 @@ def Direct(
             edge_resolved = np.concatenate((edge_resolved[~lledge_mask], 
                                             childless[resolved_mask][~llresolved_mask]))
 
+            
             childless = childless[~resolved_mask]
 
-            if printfile != '':
-                print(' ', end='\r', flush=True)
-                print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
-                
-                for f in ('children', 'resolved'):
-                    #copy files as temps
-                    shutil.copyfile(f'{printfile}-{f}.csv', f'{printfile}-{f}-temp.csv')
-
-                with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
-                    if len(childless) > 0: # we want to overwrite file with blank if childless is empty
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless]), 
-                                                   np.array([h.extras for h in childless]),
-                                                   np.array([h.centre for h in childless])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
-                with open(printfile+'-resolved-temp.csv', 'w', newline='') as csvfile:
-                    # we want to overwrite file with blank if childless is empty
-                    resolved = np.concatenate((landlocked_resolved, edge_resolved))
-                    if len(resolved) > 0:
-                        printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in resolved]), 
-                                                   np.array([h.extras for h in resolved]),
-                                                   np.array([h.centre for h in resolved])), 
-                                                   axis=1)
-                        writer(csvfile).writerows(printout)
-                        del resolved
-                del printout
-
-                for f in ('children', 'resolved'):
-                    #replace files with temps
-                    shutil.copyfile(f'{printfile}-{f}-temp.csv', f'{printfile}-{f}.csv')
-                    os.remove(f'{printfile}-{f}-temp.csv')
-
-                print(' '*160, end = '\r', flush=True)
-                print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*20}', end='\r', flush=True)
+            print(f'it {i} - #hrects: {len(parents)}. Sorting Rectangles... {" "*20}', end='\r', flush=True)
             
             # generate array of list-index, cost, and volume
             fvs = np.array([(j, h.f, h.volume) for j, h in enumerate(childless)], dtype=np.float64)
@@ -809,7 +793,8 @@ def Direct(
             parents = childless[new_accepted]
 
             i+=1
-        archive = np.concatenate((archive, landlocked_resolved, edge_resolved))
+        archive = np.concatenate((archive, resolved))
+        resolved = np.array([], dtype=hyperrectangle)
         if printfile != '':
             print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
 
@@ -943,18 +928,18 @@ def _reconstruct_from_centre(centres, bounds, maxres=2**31):
 
 def _restart(restart, bounds, nextras, disp):
     print('Restarting optimisation where',restart,'left off.')
-    history = np.genfromtxt(restart+'-children.csv', delimiter=',', dtype=np.float64)
+    history = pd.read_csv(restart+'-children.csv', header=None).to_numpy() # signficantly faster and lower memory than np.genfromtxt
     try: 
-        resolved = np.genfromtxt(restart+'-resolved.csv', delimiter=',', dtype=np.float64)
+        resolved = pd.read_csv(restart+'-resolved.csv', header=None).to_numpy()
         if len(resolved) != 0:
             history = np.vstack((history, np.atleast_2d(resolved)))
         del resolved
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         warnings.warn("Warning: No resolved file found.", UserWarning)
     try: 
-        parents = np.genfromtxt(restart+'-parents.csv', delimiter=',', dtype=np.float64)
+        parents = pd.read_csv(restart+'-parents.csv', header=None).to_numpy()
         pmin, pminidx = parents[:,0].min(), parents[:,0].argmin()
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         pmin, pminidx= np.inf, None
         warnings.warn("Warning: No parents file found.", UserWarning)
     fs, exs, xs = history[:,:3], history[:,3:3+nextras], history[:,3+nextras:]
@@ -1066,6 +1051,119 @@ def _factor2(n):
         i+=1
     return 2**i
     
+
+def deresolve(restart, bounds, nextras, min_half_length, printfile):    
+    """ Used to go back to a lower resolution 
+    Note: use with extreme care.
+    Use only valid if rect_dim is a divisor of ndim """
+    
+    history = pd.read_csv(restart+'-children.csv', header=None).to_numpy()
+    resolved = pd.read_csv(restart+'-resolved.csv', header=None).to_numpy()
+    parents = pd.read_csv(restart+'-parents.csv', header=None).to_numpy()
+
+    fs, exs, xs = history[:,:3], history[:,3:3+nextras], history[:,3+nextras:]
+    xs, lbs, ubs = _reconstruct_from_centre(xs, bounds)
+    hmin, hmini = fs[:,0].min(), fs[:,0].argmin()
+    history = np.array([hyperrectangle(xs[i], *fs[i,:], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
+    
+    fs, exs, xs = resolved[:,:3], resolved[:,3:3+nextras], resolved[:,3+nextras:]
+    xs, lbs, ubs = _reconstruct_from_centre(xs, bounds)
+    rmin, rmini = fs[:,0].min(), fs[:,0].argmin()
+    resolved = np.array([hyperrectangle(xs[i], *fs[i,:], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
+    
+    fs, exs, xs = parents[:,:3], parents[:,3:3+nextras], parents[:,3+nextras:]
+    xs, lbs, ubs = _reconstruct_from_centre(xs, bounds)
+    pmin, pmini = fs[:,0].min(), fs[:,0].argmin()
+    parents = np.array([hyperrectangle(xs[i], *fs[i,:], exs[i], lbs[i], ubs[i], np.nan) for i in range(len(xs))])
+
+    elite_or = history[hmini] if hmin <= rmin and hmin <= pmin else\
+        resolved[rmini] if rmin <= pmin else\
+        parents[pmini]
+
+    hor = np.array([(h.half_length*2 < min_half_length).any() for h in history])
+    ror = np.array([(h.half_length*2 < min_half_length).any() for h in resolved])
+    por = np.array([(h.half_length*2 < min_half_length).any() for h in parents])
+
+    if printfile != '':
+        with open(printfile+'-children-over_resolved.csv', 'w', newline='') as csvfile:
+            if hor.sum() > 0: # we want to overwrite file with blank if empty
+                printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in history[hor]]), 
+                                           np.array([h.extras for h in history[hor]]),
+                                           np.array([h.centre for h in history[hor]])), 
+                                           axis=1)
+                writer(csvfile).writerows(printout)
+        with open(printfile+'-parents-over_resolved.csv', 'w', newline='') as csvfile:
+            if por.sum() > 0: # we want to overwrite file with blank if empty
+                printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents[por]]), 
+                                           np.array([h.extras for h in parents[por]]),
+                                           np.array([h.centre for h in parents[por]])), 
+                                           axis=1)
+                writer(csvfile).writerows(printout)
+        with open(printfile+'-resolved-over_resolved.csv', 'w', newline='') as csvfile:
+            if ror.sum() > 0: # we want to overwrite file with blank if empty
+                printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in resolved[ror]]), 
+                                           np.array([h.extras for h in resolved[ror]]),
+                                           np.array([h.centre for h in resolved[ror]])), 
+                                           axis=1)
+                writer(csvfile).writerows(printout)
+
+    history = history[~hor]
+    resolved = resolved[~ror]
+    parents = parents[~por]
+    
+    h_to_r = np.array([(h.half_length < min_half_length).all() for h in history])
+    p_to_r = np.array([(h.half_length < min_half_length).all() for h in parents])
+    
+    resolved = np.concatenate((
+        resolved, 
+        history[h_to_r], 
+        parents[p_to_r]
+        ))
+    
+    history = history[~h_to_r]
+    parents = parents[~p_to_r]
+
+    
+    hmin = np.array([(h.f) for i, h in enumerate(history)])
+    pmin = np.array([(h.f) for i, h in enumerate(parents)])
+    rmin = np.array([(h.f) for i, h in enumerate(resolved)])
+    hmin, hmini = hmin.min(), hmin.argmin()
+    pmin, pmini = pmin.min(), pmin.argmin()
+    rmin, rmini = (rmin.min(), rmin.argmin()) if len(rmin) > 0 else (np.inf, np.inf)
+    
+    elite = history[hmini] if hmin <= rmin and hmin <= pmin else\
+        resolved[rmini] if rmin <= pmin else\
+        parents[pmini]
+        
+    if printfile != '':
+        with open(printfile+'-resolved-temp.csv', 'w', newline='') as csvfile:
+            if len(resolved)>0:
+                printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in resolved]), 
+                                           np.array([h.extras for h in resolved]),
+                                           np.array([h.centre for h in resolved])), 
+                                           axis=1)
+                writer(csvfile).writerows(printout)
+        with open(printfile+'-parents-temp.csv', 'w', newline='') as csvfile:
+            if len(parents)>0:
+                printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in parents]), 
+                                           np.array([h.extras for h in parents]),
+                                           np.array([h.centre for h in parents])), 
+                                           axis=1)
+                writer(csvfile).writerows(printout)
+        with open(printfile+'-children-temp.csv', 'w', newline='') as csvfile:
+            if len(history)>0:
+                printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in history]), 
+                                           np.array([h.extras for h in history]),
+                                           np.array([h.centre for h in history])), 
+                                           axis=1)
+                writer(csvfile).writerows(printout)
+        for f in ('parents', 'children', 'resolved'):
+            #replace files with temps
+            shutil.copyfile(f'{printfile}-{f}-temp.csv', f'{printfile}-{f}.csv')
+            os.remove(f'{printfile}-{f}-temp.csv')
+            
+    return history, resolved, elite
+
 class DirectResult:
     def __init__(self, x, extras, f, nfev, nit, lb, ub, volume, vratio):
         self.x = x

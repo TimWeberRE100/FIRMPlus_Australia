@@ -503,7 +503,8 @@ def Direct(
                 print(' ', end='\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Writing out to file. Do not Interrupt.', end='\r', flush=True)
 
-                shutil.copyfile(f'{printfile}-parents.csv', f'{printfile}-parents-temp.csv')
+                for f in ('parents', 'resolved'):
+                    shutil.copyfile(f'{printfile}-{f}.csv', f'{printfile}-{f}-temp.csv')
 
                 if len(parents) > 0:
                     with open(printfile+'-parents-temp.csv', 'a', newline='') as csvfile:
@@ -519,7 +520,7 @@ def Direct(
                                                    np.array([h.centre for h in childless[~resolved_mask]])), 
                                                    axis=1)
                         writer(csvfile).writerows(printout)
-                with open(printfile+'-resolved-temp.csv', 'w', newline='') as csvfile:
+                with open(printfile+'-resolved-temp.csv', 'a', newline='') as csvfile:
                     if resolved_mask.sum() > 0:  # we want to overwrite file with blank if resolved is empty
                         printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in childless[resolved_mask]]), 
                                                    np.array([h.extras for h in childless[resolved_mask]]),
@@ -888,8 +889,8 @@ def sortrectangles(resolved, eligible):
 
 @njit(parallel=True)
 def _borderheuristic(rects, best):
-    minlb =  np.inf*np.ones(best[0].ndim, dtype=np.float64)
-    maxub = -np.inf*np.ones(best[0].ndim, dtype=np.float64)
+    minlb =  np.inf*np.ones(len(best[0].centre), dtype=np.float64)
+    maxub = -np.inf*np.ones(len(best[0].centre), dtype=np.float64)
     
     for i in range(len(best)): 
         minlb = np.minimum(minlb, best[i].centre-best[i].half_length)

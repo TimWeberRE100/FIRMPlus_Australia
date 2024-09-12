@@ -444,9 +444,9 @@ def Direct(
     # prev_bests = np.array([], dtype=hyperrectangle) #locally biased
     if vectorizable:
         if extra_output:
-            _divide_hrect = _divide_vec 
-        else: 
             _divide_hrect = _divide_vec_extra
+        else: 
+            _divide_hrect = _divide_vec
     else: 
         if extra_output:
             _divide_hrect = _divide_mp_extra
@@ -566,7 +566,7 @@ def Direct(
             ler=np.uint64(len(edge_resolved))
 
             #choose which method to use based on approximate no. of comparisons required
-            if resolved_mask.sum() > 0 and recalc_resolved is True:
+            if r_m_sum > 0 and recalc_resolved is True:
                 print(' ', end = '\r', flush=True)
                 print(f'it {i} - #hrects: {len(parents)}. Identifying isolated resolved points (part1). Estimated time: ', end='', flush=True)  
 
@@ -763,40 +763,34 @@ def Direct(
                 near_optimal_threshold = elite.f*near_optimal
                 near_optimal_resolved = np.array([h.f < near_optimal_threshold for h in edge_resolved])
 
+                new_accepted = np.zeros(len(childless), dtype=np.bool_)
                 if near_optimal_resolved.sum()>0:
-                    eligible = np.ones(len(childless), dtype=np.bool_)
-                    eligible[_semibarren_speedup(list(childless[eligible]), dims, min_half_length)] = False
+                    
+                    
+                    eligible = ~_semibarren_speedup(list(childless), dims, min_half_length)
                     if eligible.sum() > 0:
-                        eligible[_borderheuristic(list(childless[eligible]), 
-                                                  list(edge_resolved[near_optimal_resolved]))] = False
+                            eligible[eligible] = ~_borderheuristic(list(childless[eligible]), 
+                                                                   list(edge_resolved[near_optimal_resolved]))
                     print(' '*160, end = '\r', flush=True)
                     print(f'it {i} - #hrects: {len(parents)}. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
-                    if eligible.sum() <= cpu_count()*14 or eligible.sum()*near_optimal_resolved.sum() < 50e10 / ndim:
+                    if eligible.sum() <= cpu_count()*30 or eligible.sum()*near_optimal_resolved.sum() < 50e10 / ndim:
                         print('< a few minutes. ', end ='\r', flush=True)
-                        new_accepted = sortrectangles(list(edge_resolved[near_optimal_resolved]), 
-                                                      list(childless[eligible]))
-                    else: 
-                        time_test_range = cpu_count()*7
-                        
+                        new_accepted[eligible] = sortrectangles(list(childless[eligible]),
+                                                                list(edge_resolved[near_optimal_resolved]))
+                    else:   
+                        time_test_range = cpu_count()*15
                         timer_mask = np.zeros(len(eligible), dtype=np.bool_)
                         timer_mask[:_find_bool_indx(eligible, time_test_range)+1] = True
                         
                         sort_start = dt.datetime.now()
-                        new_accepted = sortrectangles(list(edge_resolved[near_optimal_resolved]), 
-                                                      list(childless[eligible*timer_mask]))
+                        new_accepted[eligible*timer_mask] = sortrectangles(list(childless[eligible*timer_mask]),
+                                                                           list(edge_resolved[near_optimal_resolved]))
                         sort_time = (eligible.sum() - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
                         print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
-                        new_accepted = np.concatenate((new_accepted, 
-                            sortrectangles(list(edge_resolved[near_optimal_resolved]), 
-                                            list(childless[eligible*~timer_mask]))))
-
+                        new_accepted[eligible*~timer_mask] = sortrectangles(list(childless[eligible*~timer_mask]),
+                                                                            list(edge_resolved[near_optimal_resolved]))
                     print(' '*160, end='\r', flush=True)
                     
-                    eligible[eligible] = new_accepted
-                    new_accepted=eligible
-                else: 
-                    new_accepted = np.zeros(len(childless), dtype=np.bool_)
-
             if new_accepted.sum() > 0:
                 conv_count=0
 
@@ -829,7 +823,7 @@ def Direct(
                                                np.array([h.centre for h in archive])), 
                                                axis=1)
                     writer(csvfile).writerows(printout)
-            with open(printfile+'-resolved.csv', 'w') as csvfile:
+            with open(printfile+'-resolved.csv', 'w', newline='') as csvfile:
                 if len(resolved)>0:
                     printout = np.concatenate((np.array([(h.f, h.generation, h.cuts) for h in resolved]), 
                                                np.array([h.extras for h in resolved]),
@@ -854,35 +848,38 @@ def Direct(
         eligible = np.ones(len(resolved), dtype=np.bool_)
         neighbours = np.zeros(len(resolved), dtype=np.bool_)
         eligible[near_optimal_resolved] = False
-        # if eligible.sum() > 0:
-        #     eligible[_borderheuristic(list(resolved[eligible]), 
-        #                               list(resolved[near_optimal_resolved]))] = False
+        if eligible.sum() > 0:
+            eligible[eligible] = ~_borderheuristic(list(resolved[eligible]), 
+                                                   list(resolved[near_optimal_resolved]))
         print(' '*160, end = '\r', flush=True)
-        print(f'Polishing. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
+        print('Polishing. Identifying near-optimal neighbours. Estimated time: ', end='', flush=True)  
         if eligible.sum() <= cpu_count()*30 or eligible.sum()*near_optimal_resolved.sum() < 50e10 / ndim:
             print('< a few minutes. ', end ='', flush=True)
-            neighbours[sortrectangles(list(resolved[near_optimal_resolved]), 
-                                      list(resolved[eligible]))] = True
+            neighbours[eligible] = sortrectangles(list(resolved[eligible]),
+                                                  list(resolved[near_optimal_resolved]))
+            # This needs to be two-step to avoid chain-indexing copy/view problems
         else: 
             time_test_range = cpu_count()*15
-            
             timer_mask = np.zeros(len(eligible), dtype=np.bool_)
             timer_mask[:_find_bool_indx(eligible, time_test_range)+1] = True
             
             sort_start = dt.datetime.now()
-            neighbours = sortrectangles(list(resolved[near_optimal_resolved]), 
-                                        list(resolved[eligible*timer_mask]))
+            neighbours[eligible*timer_mask] = sortrectangles(list(resolved[eligible*timer_mask]), 
+                                                             list(resolved[near_optimal_resolved]))
             sort_time = (eligible.sum() - time_test_range)/time_test_range*(dt.datetime.now()-sort_start)
             print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
-            neighbours = np.concatenate((neighbours, 
-                sortrectangles(list(resolved[near_optimal_resolved]), 
-                               list(resolved[eligible*~timer_mask]))))
-        eligible[~neighbours] = False
-        parents = (near_optimal_resolved + eligible).astype(bool)
+            neighbours[eligible*~timer_mask] = sortrectangles(list(resolved[eligible*~timer_mask]),
+                                                              list(resolved[near_optimal_resolved]))
+        parents = (near_optimal_resolved + neighbours).astype(bool)
+        parents = resolved[parents]
         
         polished = np.array([hrect for parent in 
                              tqdm(parents, desc=f'it {i} - #hrects: {len(parents)}. Evaluating Rectangles', leave=False)
-                             for hrect in _polish(func, parent, dims, f_args, min_half_length, nextras)])
+                             for hrect in _polish(func, parent, dims, f_args, nextras)])
+
+        fs = np.array([h.f for h in enumerate(polished)])
+        if fs.min() < elite.f:
+            elite = polished[fs.argmin()]
 
         with open(printfile+'-polished-temp.csv', 'w', newline='') as csvfile:
             if len(polished) > 0:
@@ -953,7 +950,7 @@ def _semibarren_speedup(rects, dims, min_half_length):
     return accepted
 
 @njit(parallel=True)
-def sortrectangles(resolved, eligible):
+def sortrectangles(eligible, resolved):
     accepted=np.zeros(len(eligible), dtype=np.bool_)
     for i in prange(len(eligible)):
         h = eligible[i]
@@ -985,8 +982,12 @@ def _normalise(arr, lb, ub):
     return (arr-lb)/(ub-lb)
 
 @njit
-def _unnormalise(arr, lb, ub):
+def _unnormalise_c(arr, lb, ub):
     return arr*(ub-lb) + lb
+
+@njit
+def _unnormalise_hl(arr, lb, ub):
+    return arr*(ub-lb)
 
 @njit(parallel=True)
 def _reconstruct_from_centre(centres, bounds, maxres=2**31):
@@ -999,7 +1000,8 @@ def _reconstruct_from_centre(centres, bounds, maxres=2**31):
             incs1[i,j] = _factor2(incs[i,j])
     half_lengths = incs1 / maxres
     
-    centres, half_lengths = [_unnormalise(arr, lb, ub) for arr in (centres, half_lengths)]
+    centres = _unnormalise_c(centres, lb, ub) 
+    half_lengths = _unnormalise_hl(half_lengths, lb, ub) 
     return centres, half_lengths
     
 

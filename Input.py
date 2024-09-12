@@ -101,8 +101,10 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 
+
+
 lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.])
-ub = np.array([48.] * pzones + [48.]  * wzones + [48.] * nodes + [2048.])
+ub = np.array([16.] * pzones + [16.]  * wzones + list(np.array(contingency)+16) + [512.])
 
 #%%
 from Simulation import Reliability, VReliability

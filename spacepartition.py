@@ -194,8 +194,6 @@ class Spacepartition:
         self._printout(self.new_resolved, 'resolved', 'w')
         
     def _iterate(self):
-        func, f_args, min_half_length, nextras = self.func, self.f_args, self.min_half_length, self.nextras
-        
         parents = np.array([], dtype=hyperrectangle)
         
         miter = self.max_iter + self.i
@@ -751,7 +749,7 @@ def find_bool_indx(mask, count):
     before it. If there are less than {count} Trues in the array, returns -1. 
     Not valid for count<=0 """
     if count >= len(mask) or count >= mask.sum():
-        return None
+        return len(mask)
     _mask_indx, _counter = -1, 0
     while _counter < count:
         _mask_indx+=1

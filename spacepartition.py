@@ -47,11 +47,10 @@ class Result:
         self.nfev = nfev
         self.nit = nit
         self.half_length = half_length
-        self.lb, self.ub = x-halflength, x+half_length
+        self.lb, self.ub = x-half_length, x+half_length
         self.volume = (half_length * 2).prod()
-        self.vratio = vratio
 
-class spacepartition:
+class Spacepartition:
     def __init__(self, 
                  func, 
                  bounds, 
@@ -184,7 +183,7 @@ class spacepartition:
                                          self.ll_resolved))
         self.new_resolved = np.array([], dtype=hyperrectangle)
         if len(self.childless) > 0:
-            resolved_mask = _semibarren_speedup(list(self.childless), np.ones(self.ndim, dtype=np.bool_), self.min_half_length) 
+            resolved_mask = semibarren_speedup(list(self.childless), np.ones(self.ndim, dtype=np.bool_), self.min_half_length) 
             self.new_resolved = self.childless[resolved_mask]
             self.childless = self.childless[~resolved_mask]
             
@@ -227,9 +226,9 @@ class spacepartition:
             
             if best.sum() > 0:
                 # only rectangles which can be split on current splitting axes
-                best = ~_semibarren_speedup(list(self.childless[best]), self.dims, self.min_half_length)
+                best = ~semibarren_speedup(list(self.childless[best]), self.dims, self.min_half_length)
                 # limit number of rectangles 
-                best[_find_bool_indx(best, min(self.max_pop, self.maxparents))+1:] = False
+                best[find_bool_indx(best, min(self.max_pop, self.maxparents)):] = False
                 # append 0s to best to match the childless array
                 best = np.concatenate((best, 
                                        np.zeros(len(self.childless) - nearoptimalcount, dtype=np.bool_)))
@@ -239,7 +238,7 @@ class spacepartition:
                 self.near_optimal_resolved = np.array([h.f < near_optimal_threshold for h in self.edge_resolved])
                 if self.near_optimal_resolved.sum() > 0:
                     # rectangles which cannot be split on the axes are ineligible
-                    self.eligible = ~_semibarren_speedup(list(self.childless), self.dims, self.min_half_length)
+                    self.eligible = ~semibarren_speedup(list(self.childless), self.dims, self.min_half_length)
                     if self.eligible.sum() > 0:
                         # rectangles failing beyond maximal extent of near-optimal resolved are ineligible
                         self.eligible[self.eligible] = ~_borderheuristic(list(self.childless[self.eligible]), 
@@ -257,7 +256,7 @@ class spacepartition:
                 nrotate = 0
             
             if best.sum() > self.maxparents:
-                best[_find_bool_indx(best, self.maxparents)+1:] = False
+                best[find_bool_indx(best, self.maxparents):] = False
             
             parents = self.childless[best]
             self.childless = self.childless[~best]
@@ -280,7 +279,7 @@ class spacepartition:
                 del fs
             
                 # identify resolved rectangles 
-                self.resolved_mask = _semibarren_speedup(list(new_hrects), np.ones(self.ndim, dtype=np.bool_), self.min_half_length)
+                self.resolved_mask = semibarren_speedup(list(new_hrects), np.ones(self.ndim, dtype=np.bool_), self.min_half_length)
                 
                 # combine all childless rectangles
                 self.resolved_mask = np.concatenate((self.resolved_mask, np.zeros(len(self.childless), dtype=np.bool_)))
@@ -383,13 +382,13 @@ class spacepartition:
             # this mask is multiplied with the base_mask to select the first {ntime} samples 
             # the inverse is multiple with base_mask to select the remaining samples
             time_mask = np.zero(len(base_mask), dtype=np.bool_)
-            time_mask[:_find_bool_indx(base_mask, ntime) + 1] = True
+            time_mask[:find_bool_indx(base_mask, ntime)] = True
             
             sort_start = dt.datetime.now()
             # evaluate first {ntime}
             return_mask = long_func(time_mask)
             
-            sort_time = (dt.datetime.now() - sort_start) * (basemask.sum() - ntime) / ntime
+            sort_time = (dt.datetime.now() - sort_start) * (base_mask.sum() - ntime) / ntime
             print(f'{sort_time}. Estimated end time: {dt.datetime.now() + sort_time}. ', end='\r', flush=True)
             
             # evaluate remaining values
@@ -476,7 +475,7 @@ class spacepartition:
         
         if self.near_optimal_resolved.sum() > 0 and self.eligible.sum() >0:
             # rectangles which cannot be split on the axes are ineligible
-            self.eligible[self.eligible] = ~_semibarren_speedup(list(self.all_resolved[self.eligible]), self.dims, self.min_half_length)
+            self.eligible[self.eligible] = ~semibarren_speedup(list(self.all_resolved[self.eligible]), self.dims, self.min_half_length)
             if self.eligible.sum() > 0:
                 # rectangles failing beyond maximal extent of near-optimal resolved are ineligible
                 self.eligible[self.eligible] = ~_borderheuristic(list(self.all_resolved[self.eligible]), 
@@ -505,9 +504,8 @@ def _common_divide(hrect, dims):
     # pre-processing common to all _divide_... functions
     l_dim = len(dims)
     n_new = 2**l_dim
-    indcs = _generate_boolmatrix(l_dim)
 
-    centres = _generate_centres(hrect, indcs, dims)
+    centres = generate_centres(hrect, dims)
     hls = hrect.half_length.copy()
     hls[dims] /= 2 
     gen, cuts = hrect.generation + 1, hrect.cuts + l_dim
@@ -616,16 +614,16 @@ def _polish(func, hrect, dims, f_args, nextras):
 @njit(parallel=True)
 def _reconstruct_from_centre(centres, bounds, maxres=2**31):
     lb, ub = bounds
-    centres = _normalise(centres, lb, ub)   
+    centres = normalise(centres, lb, ub)   
     incs = np.round((centres*maxres)).astype(np.uint64)
     incs1 = np.empty_like(incs)
     for i in prange(len(centres)):
         for j in range(centres.shape[1]):
-            incs1[i,j] = _factor2(incs[i,j])
+            incs1[i,j] = factor2(incs[i,j])
     half_lengths = incs1 / maxres
     
-    centres = _unnormalise_c(centres, lb, ub) 
-    half_lengths = _unnormalise_hl(half_lengths, lb, ub) 
+    centres = unnormalise_c(centres, lb, ub) 
+    half_lengths = unnormalise_hl(half_lengths, lb, ub) 
     return centres, half_lengths
     
 #%% Hyperrectangle helper funcctions
@@ -633,10 +631,10 @@ def _reconstruct_from_centre(centres, bounds, maxres=2**31):
 @njit
 def hrect_semibarren(h, dims, min_half_length):
     """Returns True if {h} is at maximum resolution along {dims} axes """
-    return (h.half_length < min_half_length)[dims].prod() == 1
+    return (h.half_length <= min_half_length)[dims].all()
 
 @njit(parallel=True)
-def _semibarren_speedup(rects, dims, min_half_length):
+def semibarren_speedup(rects, dims, min_half_length):
     """Returns boolean array like rects where Trues are at maximum resolution along {dims} axes """
     accepted = np.empty(len(rects), dtype=np.bool_)
     for i in prange(len(rects)):
@@ -674,11 +672,11 @@ def find_neighbours(eligible, members):
     return accepted
 
 @njit 
-def _sub_landlocked_bysum(h, pool, bounds):
+def _sub_landlocked_bysum(h, members, bounds):
     """ Returns True if h is landlocked by pool """
     """ Assumes h is of the smallest resolution in archive """
     faces = len(h.centre)*2 - (h.centre-h.half_length == bounds[0]).sum() - (h.centre+h.half_length == bounds[1]).sum()
-    for h2 in pool:
+    for h2 in members:
         if hrects_border(h, h2):
             faces -= 1 
         if faces == 0:
@@ -686,33 +684,33 @@ def _sub_landlocked_bysum(h, pool, bounds):
     return False
             
 @njit(parallel=True)
-def landlocked_bysum(eligible, resolved, bounds):
+def landlocked_bysum(eligible, members, bounds):
     accepted = np.empty(len(eligible), dtype=np.bool_)
     for i in prange(len(eligible)):
-        accepted[i] = _sub_landlocked_bysum(eligible[i], resolved, bounds)
+        accepted[i] = _sub_landlocked_bysum(eligible[i], members, bounds)
     return accepted 
 
 @njit 
-def _sub_landlocked_bycontra(h, antipool):
+def _sub_landlocked_bycontra(h, nonmembers):
     """ Returns True if h is landlocked by pool """
-    for h2 in antipool: 
+    for h2 in nonmembers: 
         if hrects_border(h, h2):
             return False
     return True
 
 @njit(parallel=True)
-def landlocked_bycontra(eligible, unresolved):
+def landlocked_bycontra(eligible, nonmembers):
     accepted = np.empty(len(eligible), dtype=np.bool_)
     for i in prange(len(eligible)):
-        accepted[i] = _sub_landlocked_bycontra(eligible[i], unresolved)
+        accepted[i] = _sub_landlocked_bycontra(eligible[i], nonmembers)
     return accepted
 
 @njit #parallel is slower for ndim range
-def _generate_centres(hrect, indcs, dims):
-    lb, ub = hrect.centre - hrect.half_length, hrect.centre + hrect.half_length
-
-    l = (lb + hrect.centre)[dims]/2
-    u = (hrect.centre + ub)[dims]/2
+def generate_centres(hrect, dims):
+    l = (hrect.centre - hrect.half_length/2)[dims]
+    u = (hrect.centre + hrect.half_length/2)[dims]
+    
+    indcs = generate_boolmatrix(len(dims))
     
     centres = np.repeat(hrect.centre, len(indcs)).reshape((len(hrect.centre), len(indcs))).T
     for i in prange(len(indcs)):
@@ -724,68 +722,57 @@ def _generate_centres(hrect, indcs, dims):
     return centres
 
 @njit
-def hrects_border(h1, h2, tol = 1e-12):
-    # First test is redundant but filters out obivous non-borders fast 
-    # the domains in each direction touch   
+def hrects_border(h1, h2, tol = 1e-10):
     lb1, ub1 = h1.centre - h1.half_length, h1.centre + h1.half_length
     lb2, ub2 = h2.centre - h2.half_length, h2.centre + h2.half_length
     ndim = len(lb1)
     
-    if (((ub2 - lb1) >= -tol) * 
-        ((ub1 - lb2) >= -tol)# directions where the domains of each h2 touch
-        ).sum() != ndim:
-        return False        
-
-    # in ndim-1 directions the directions' domains overlap (either perfectly, or one inside another)
-    overlap = (signs_of_array(ub2 - ub1, tol) ==
-                signs_of_array(lb1 - lb2, tol))
-    if overlap.sum() != ndim-1:
+    # axes in which domain of h1 wholly contains or is wholly inside of domain of h2 
+    overlaps = (lb1 >= lb2 - tol) * (ub1 <= ub2 + tol) + (lb1 <= lb2 + tol) * (ub1 >= ub2 - tol)
+    if overlaps.sum() != ndim-1:
         return False
-
+    
     # adjacent (ub=lb or lb=ub) (higher OR lower) in exactly one dimension
     adjacency = ((np.abs(ub2 - lb1) < tol) +
                  (np.abs(lb2 - ub1) < tol)) 
     if adjacency.sum() != 1:
         return False
-
-    # Direction of adjacency is the direction not overlapping
-    if (adjacency == ~overlap).prod() != 1:
-        return False
     
-    # Rectangles are the same
-    if (ub1 != ub2).sum() + (lb1 != lb2).sum() == 0:
+    # adjacent on dimensions which do not overlap
+    if not (adjacency == ~overlaps).all():
         return False
     
     return True
 
 #%% Light duty helper functions
 @njit
-def _find_bool_indx(mask, count):
+def find_bool_indx(mask, count):
     """returns the index of the boolean mask such that there are {count} Trues 
-    before it"""
-    if count > len(mask) or count > mask.sum():
-        return len(mask)-1
+    before it. If there are less than {count} Trues in the array, returns -1. 
+    Not valid for count<=0 """
+    if count >= len(mask) or count >= mask.sum():
+        return None
     _mask_indx, _counter = -1, 0
     while _counter < count:
         _mask_indx+=1
         if mask[_mask_indx]:
             _counter += 1
-    return _mask_indx
+    return _mask_indx + 1
 
 @njit
-def _normalise(arr, lb, ub):
+def normalise(arr, lb, ub):
     return (arr-lb)/(ub-lb)
 
 @njit
-def _unnormalise_c(arr, lb, ub):
+def unnormalise_c(arr, lb, ub):
     return arr*(ub-lb) + lb
 
 @njit
-def _unnormalise_hl(arr, lb, ub):
+def unnormalise_hl(arr, lb, ub):
     return arr*(ub-lb)
 
 @njit
-def _factor2(n):
+def factor2(n):
     if n==0: 
         return 0
     i=0
@@ -794,7 +781,7 @@ def _factor2(n):
     return 2**i
     
 @njit #parallel is slower for ndim range
-def _generate_boolmatrix(ndim):
+def generate_boolmatrix(ndim):
     _2ndim = 2**ndim
     z = np.empty((_2ndim, ndim), dtype=np.bool_)
     for i in prange(ndim):
@@ -809,5 +796,3 @@ def _generate_boolmatrix(ndim):
 def signs_of_array(arr, tol=1e-10):
     arr[np.abs(arr)<tol] = 0 
     return np.sign(arr)
-    
-    

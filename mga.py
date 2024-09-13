@@ -12,7 +12,7 @@ from numba import njit
 from csv import writer
 
 from Input import *
-from spacepartition import spacepartition
+from spacepartition import Spacepartition
 
 
 
@@ -65,7 +65,7 @@ if __name__ == '__main__':
     
     res = [first_pass, ultralow_res, low_res, medium_res, high_res, ultrahigh_res, polishing]
 
-    problem = spacepartition(
+    problem = Spacepartition(
         func=Vobj if args.vec else Obj  , 
         bounds=(lb, ub)  ,
         f_args=(args.vp,) if args.vec else ()  ,
@@ -78,41 +78,41 @@ if __name__ == '__main__':
         nextras = 5,
         )
 
-    # problem.Step({'max_iter':25,
-    #               'max_res':res[0],
-    #               'near_optimal':np.inf, 
-    #               'max_pop':25,
-    #               })
-    # print('step2')
-    # problem.Step({'max_iter':10,
-    #               'max_res':res[0],
-    #               'near_optimal':1.5, 
-    #               'max_pop':25,
-    #               })
-    # print('step3')
-    # problem.Step({'max_iter':20,
-    #               'max_res':res[1],
-    #               'near_optimal':1.5, 
-    #               'max_pop':25,
-    #               })
-    # print('step4')
-    # problem.Step({'max_iter':np.inf,
-    #               'max_res':res[1],
-    #               'near_optimal':1.03, 
-    #               'max_pop':1000,
-    #               })
-    # print('step5')
-    # problem.Step({'max_iter':20,
-    #               'max_res':res[1],
-    #               'near_optimal':1.1, 
-    #               'max_pop':50,
-    #               })
-    # print('step6')
-    # problem.Step({'max_iter':np.inf,
-    #               'max_res':res[1],
-    #               'near_optimal':1.03, 
-    #               'max_pop':1000,
-    #               })
+    problem.Step({'max_iter':25,
+                  'max_res':res[0],
+                  'near_optimal':np.inf, 
+                  'max_pop':25,
+                  })
+    print('step2')
+    problem.Step({'max_iter':10,
+                  'max_res':res[0],
+                  'near_optimal':1.5, 
+                  'max_pop':25,
+                  })
+    print('step3')
+    problem.Step({'max_iter':20,
+                  'max_res':res[1],
+                  'near_optimal':1.5, 
+                  'max_pop':25,
+                  })
+    print('step4')
+    problem.Step({'max_iter':np.inf,
+                  'max_res':res[1],
+                  'near_optimal':1.03, 
+                  'max_pop':1000,
+                  })
+    print('step5')
+    problem.Step({'max_iter':20,
+                  'max_res':res[1],
+                  'near_optimal':1.1, 
+                  'max_pop':50,
+                  })
+    print('step6')
+    problem.Step({'max_iter':np.inf,
+                  'max_res':res[1],
+                  'near_optimal':1.03, 
+                  'max_pop':1000,
+                  })
     print('polish')
     problem.Polish({'max_res':res[1], 
                     'near_optimal':1.03})

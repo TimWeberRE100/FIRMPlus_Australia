@@ -199,9 +199,7 @@ class Spacepartition:
         miter = self.max_iter + self.i
         mfev = self.max_fev + self.fev
         nrotate=0
-        while (self.i < miter 
-               and self.fev < mfev 
-               and nrotate < self.max_rot):
+        while (self.i < miter and self.fev < mfev and nrotate < self.max_rot):
             it_start = dt.datetime.now()
             
             self._sort_resolved()
@@ -225,8 +223,6 @@ class Spacepartition:
             if best.sum() > 0:
                 # only rectangles which can be split on current splitting axes
                 best = ~semibarren_speedup(list(self.childless[best]), self.dims, self.min_half_length)
-                # limit number of rectangles 
-                best[find_bool_indx(best, min(self.max_pop, self.maxparents)):] = False
                 # append 0s to best to match the childless array
                 best = np.concatenate((best, 
                                        np.zeros(len(self.childless) - nearoptimalcount, dtype=np.bool_)))
@@ -246,7 +242,9 @@ class Spacepartition:
                     best = self._time_long_func(self._find_neighbours_parent, self.eligible, self.eligible.sum(), self.eligible.sum()*self.near_optimal_resolved.sum())
                     self.eligible[self.eligible] = best
                     best = self.eligible
-                    
+            
+            # limit number of rectangles 
+            best[find_bool_indx(best, min(self.max_pop, self.maxparents)):] = False
 
             if best.sum() == 0: # no near-optimal rectangles to be split
                 nrotate +=1 # as this accumulates, it will stop iterating when nothing to be split

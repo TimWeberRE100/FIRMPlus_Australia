@@ -104,11 +104,18 @@ GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 
 
 lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.])
-ub = np.array([16.] * pzones + [16.]  * wzones + list(np.array(contingency)+16) + [512.])
+# ub = np.array([16.] * pzones + [16.]  * wzones + list(np.array(contingency)+16) + [512.])
+ub = np.array([50.] * pzones + [50.]  * wzones + nodes*[50.] + [2048.])
 
 #%%
-from Simulation import Reliability, VReliability
+# from Simulation import Reliability, VReliability
 from Network import Transmission, VTransmission
+
+# from Simulation import  VReliability
+# from Sim2 import Reliability
+
+from Sim2 import Reliability, VReliability
+
 
 @njit()
 def vF(S):
@@ -405,3 +412,10 @@ if __name__=='__main__':
         print(solution.LCOE, solution.LCOG, solution.LCOBS, solution.LCOBT, solution.LCOBL)
     # test()
         
+    def testV(n):
+        x = (np.random.rand(n, len(lb))*np.atleast_2d(ub-lb)+lb).T
+        solution = VSolution(x)#/1.25) 
+        solution._evaluate()
+        print(solution.Lcoe, solution.Penalties)
+    # testV(2)
+    

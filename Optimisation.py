@@ -3,133 +3,166 @@
 # Licensed under the MIT Licence
 # Correspondence: bin.lu@anu.edu.au
 
-import datetime as dt
-import pygmo as pg
-from numba import jit, float64
+from datetime import datetime as dt
+from time import perf_counter
+
 import numpy as np
-from argparse import ArgumentParser
+import pyomo.environ as pyo
+from pyomo.opt import SolverFactory
 
-parser = ArgumentParser()
-parser.add_argument('-i', default=1000, type=int, required=False, help='maxiter=4000, 400')
-parser.add_argument('-p', default=100, type=int, required=False, help='popsize=2, 10')
-parser.add_argument('-m', default=0.5, type=float, required=False, help='mutation=0.5')
-parser.add_argument('-r', default=0.3, type=float, required=False, help='recombination=0.3')
-parser.add_argument('-s', default=11, type=int, required=False, help='11, 12, 13, ...')
-parser.add_argument('-n', default='Super1', type=str, required=False, help='node=Super1')
-parser.add_argument('-w', default=1, type=int, required=False, help='Number of islands in differential evolution (i.e. workers)')
-args = parser.parse_args()
+from Input import * 
 
-scenario = args.s
-node = args.n
+CHydro = CHydro-CBaseload
 
-from Input import *
-from Simulation import Reliability
-from Network import Transmission
+MLoad = MLoad / 1000. # MW to GW
+GBaseload = GBaseload / 1000. # MW to GW
 
-@jit(nopython=True)
+if scenario >= 21:
+    CostPH, CostDC = -1, -1
+else:
+    CostPH, CostDC = 0,0 
 
-def F(x):
-    """This is the objective function."""
+nyears = 4 
 
-    S = Solution(x)
+leapdays = (nyears+(4-59/365))//4
 
-    Deficit = Reliability(S, flexible=np.zeros(intervals, dtype=np.float64)) # Sj-EDE(t, j), MW
-    Flexible = Deficit.sum() * resolution / years / efficiency # MWh p.a.
-    Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
-    PenHydro = max(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
+ndays = 365*nyears + leapdays
 
-    TDC = Transmission(S) if 'Super' in node else np.zeros((intervals, len(DCloss)), dtype=np.float64)  # TDC: TDC(t, k), MW
-    TDC_abs = np.abs(TDC)
 
-    Deficit = Reliability(S, flexible=np.ones(intervals, dtype=np.float64)*CPeak.sum()*1000) # Sj-EDE(t, j), GW to MW
-    Deficit_sum = Deficit.sum() * resolution
-    PenDeficit = max(0, Deficit_sum) # MWh
 
-    CDC = np.zeros(len(DCloss), dtype=np.float64)
-    for i in range(0,intervals):
-        for j in range(0,len(DCloss)):
-            if TDC_abs[i][j] > CDC[j]:
-                CDC[j] = TDC_abs[i][j]
-    CDC = CDC * 0.001 # CDC(k), MW to GW
+#%%
+print("Instantiating model:", dt.now())
+model = pyo.ConcreteModel()
 
-    cost = factor *  np.concatenate((np.array([S.CPV.sum(), S.CWind.sum(), S.CPHP.sum(), S.CPHS]), CDC, np.array([S.CPV.sum(), S.CWind.sum(), Hydro * 0.000001, -1.0, -1.0])))
-    cost = cost.sum()
+model.pvl = pyo.RangeSet(len(PVl))
+model.windl = pyo.RangeSet(len(Windl))
+model.lines = pyo.RangeSet(len(network))
+model.nodes = pyo.RangeSet(nodes)
 
-    loss = TDC_abs.sum(axis=0) * DCloss
-    loss = loss.sum() * 0.000000001 * resolution / years # PWh p.a.
-    LCOE = cost / abs(energy - loss)
+model.t = pyo.RangeSet(ndays) # first 4 years
 
-    Func = LCOE + PenDeficit + PenHydro
+model.cpv = pyo.Var(
+    model.pvl,   
+    domain=pyo.NonNegativeReals, 
+    bounds=dict(zip(range(1, len(PVl)+1), zip(len(PVl)*[0.], len(PVl)*[50.]))),
+    initialize=dict(zip(range(1, len(PVl)+1), len(PVl)*[10.])),
+    )
+model.cwind = pyo.Var(
+    model.windl, 
+    domain=pyo.NonNegativeReals, 
+    bounds=dict(zip(range(1, len(Windl)+1), zip(len(Windl)*[0.], len(Windl)*[50.]))),
+    initialize=dict(zip(range(1, len(Windl)+1)  , len(Windl)*[10.])),
+    )
+model.cphp = pyo.Var(
+    model.nodes, 
+    domain=pyo.NonNegativeReals, 
+    bounds=dict(zip(range(1, nodes+1), zip(nodes*[0.], nodes*[50.]))),
+    initialize=dict(zip(range(1, nodes+1), nodes*[10.])),
+    )
+model.cphs = pyo.Var(
+    model.nodes, 
+    domain=pyo.NonNegativeReals, 
+    bounds=dict(zip(range(1, nodes+1), zip(nodes*[0.], nodes*[500.]))),
+    initialize=dict(zip(range(1, nodes+1), nodes*[100.])),
+    )
+model.chvdc = pyo.Var(
+    model.lines, 
+    domain=pyo.NonNegativeReals, 
+    bounds=dict(zip(range(1, len(network)+1), zip(len(network)*[0.], len(network)*[100.]))),
+    initialize=dict(zip(range(1, len(network)+1), len(network)*[50.])),
+    )
 
-    return Func
+model.gpv =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals, initialize=lambda m, t, n: sum((TSPV[t-1, n-1] * m.cpv[z+1] for z in np.where(PVl_int==Nodel_int[n-1])[0])))    
+model.gwind =   pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals, initialize=lambda m, t, n: sum((TSWind[t-1, n-1] * m.cwind[z+1] for z in np.where(Windl_int==Nodel_int[n-1])[0])))
 
-if __name__=='__main__':
-    starttime = dt.datetime.now()
-    print("Optimisation starts at", starttime)
+model.eload = pyo.Param(model.t, model.nodes, domain=pyo.Reals, rule=lambda m, t, n: MLoad[t-1, n-1] - GBaseload[t-1, n-1])
+model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, len(network)+1), factor[4:11][network_mask])))
 
-    lb = [0.]  * pzones + [0.]   * wzones + contingency   + [0.]
-    ub = [50.] * pzones + [50.]  * wzones + [50.] * nodes + [5000.]
+model.charge =  pyo.Var(model.t, model.nodes, domain=pyo.Reals)
+model.storage = pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
+model.hvdc =    pyo.Var(model.t, model.lines, domain=pyo.Reals)
+model.hydro =   pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
+model.bio =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
+model.spillage =pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 
-    class EnergyOptimizationProblem:
-        def __init__(self, lb, ub):
-            self.lb = lb
-            self.ub = ub
-        
-        def fitness(self, x):
-            return EnergyOptimizationProblem._fitness(x)
-        
-        @jit(float64[:](float64[:]), nopython=True)
-        def _fitness(x):
-            retval = np.zeros((1,))
-            retval[0] = F(x)
-            # Your objective function F(x) goes here, return a tuple with one element
-            return retval
+model.constr_gpv =   pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.gpv[t, n]   == sum((TSPV[t-1, n-1] *   m.cpv[z+1]   for z in np.where(PVl_int==  Nodel_int[n-1])[0])))
+model.constr_gwind = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.gwind[t, n] == sum((TSWind[t-1, n-1] * m.cwind[z+1] for z in np.where(Windl_int==Nodel_int[n-1])[0])))
 
-        def get_bounds(self):
-            # Return the bounds as tuples of (lb, ub)
-            return (self.lb, self.ub)
+model.constr_charge_power_lower = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n:-m.cphp[n] <= m.charge[t, n])
+model.constr_charge_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.charge[t, n] <= m.cphp[n])
 
-        def get_nobj(self):
-            # Return the number of objectives
-            return 1
+model.constr_hydro_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.hydro[t, n] <= CHydro[n-1])
+model.constr_bio_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.bio[t, n] <= CBio[n-1])
 
-    prob = pg.problem(EnergyOptimizationProblem(lb, ub))
+model.constr_storage_energy_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.storage[t, n] <= m.cphs[n])
 
-    algo = pg.algorithm(pg.de(gen=args.i, F=args.m, CR=args.r))
-    algo.set_verbosity(1)  # Change verbosity level to control the amount of logging
+model.constr_hvdc_lower = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l:-m.chvdc[l] <= m.hvdc[t, l])
+model.constr_hvdc_upper = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc[t, l] <= m.chvdc[l])
 
-    if args.w > 1:
-        # Number of islands in the archipelago
-        n_islands = 8  # You can adjust this based on your system's capabilities
-
-        # Create an archipelago with the specified number of islands
-        archi = pg.archipelago(n=n_islands, algo=algo, prob=prob, pop_size=args.p)
-
-        # Evolve the archipelago in parallel
-        archi.evolve()
-
-        # Wait for the evolution to complete
-        archi.wait()
-
-        # Collect the results
-        # You can inspect each island's best solution or aggregate results as needed
-        for i, isl in enumerate(archi):
-            print(f"Island {i}: Best Fitness = {isl.get_population().champion_x} {isl.get_population().champion_f}")
-
+def constr_state_of_charge(m, t, n):
+    if t==1:
+        return m.storage[t, n] == 0.5 * m.cphs[n]
     else:
-        pop = pg.population(prob, size=args.p)
-        pop = algo.evolve(pop)
+        return m.storage[t, n] == m.storage[t-1, n] - m.charge[t-1, n] * resolution * efficiency
 
-        best_solution = pop.champion_x
-        best_solution_fitness = pop.champion_f[0]  # Assuming a single-objective problem
+model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
 
-        # Print the best solution and its objective function value
-        print("Best solution:", best_solution)
-        print("Value of the objective function:", best_solution_fitness)
 
-    """ with open('Results/Optimisation_resultx{}{}.csv'.format(args.n, args.e), 'a', newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(best_solution) """
 
-    endtime = dt.datetime.now()
-    print("Optimisation took", endtime - starttime)
+def constr_power_balance_lower(m, t, n):
+    return (m.eload[t, n] - m.gpv[t, n] - m.gwind[t, n] - m.hydro[t,n] - m.bio[t,n] - m.charge[t,n] 
+            - sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) 
+            + sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) + m.spillage[t, n] 
+            ) >= -0.001
+def constr_power_balance_upper(m, t, n):
+    return (m.eload[t, n] - m.gpv[t, n] - m.gwind[t, n] - m.hydro[t,n] - m.bio[t,n] - m.charge[t,n] 
+            - sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) 
+            + sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) + m.spillage[t, n] 
+            ) <= 0.001
+
+model.constr_power_balance_upper = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance_upper)
+model.constr_power_balance_lower = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance_lower)
+
+def objective(m):
+    cost = (
+        factor[0] * pyo.summation(m.cpv) +
+        factor[1] * pyo.summation(m.cwind) + 
+        factor[2] * pyo.summation(m.cphp) +
+        factor[3] * pyo.summation(m.cphs) + 
+        pyo.summation(m.hvdcCost, m.chvdc) +
+        factor[11] * pyo.summation(m.cpv) +
+        factor[12] * pyo.summation(m.cwind) + 
+        factor[13] * pyo.summation(m.hydro)/ 1000. +
+        (factor[13]+0.000_001) * pyo.summation(m.bio)/ 1000. +
+        factor[14] * CostPH +
+        factor[15] * CostDC +
+
+        0)
+    LCOE = cost/energy
+    #HVDC loss not currently included. Suggest including it in energy balance
+    
+    # Penalties 
+    
+    return LCOE #+ Penalties
+    
+
+model.OBJ = pyo.Objective(rule=objective)
+
+
+opt = pyo.SolverFactory('gurobi')
+
+start=dt.now()
+print("Optimisation starts:", start)
+opt.solve(model)
+end=dt.now()
+print("Optimisation took:", end-start)
+
+
+
+# model.display()
+
+model.OBJ.display()
+
+
+
+

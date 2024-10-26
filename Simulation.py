@@ -25,8 +25,6 @@ def Reliability(solution, flexible):
         Netloadt = Netload[t]
         Storaget_1 = Storage[t-1] if t>0 else 0.5 * Scapacity
 
-        Discharget = min(max(0, Netloadt), Pcapacity, Storaget_1 / solution.resolution)
-        Charget = min(-1 * min(0, Netloadt), Pcapacity, (Scapacity - Storaget_1) / solution.efficiency / solution.resolution)
         Storaget = Storaget_1 - Discharget * solution.resolution + Charget * solution.resolution * solution.efficiency
 
         Discharge[t] = Discharget

@@ -12,17 +12,23 @@ from pyomo.opt import SolverFactory
 
 from Input import * 
 
-CHydro = CHydro-CBaseload
-
 MLoad = MLoad / 1000. # MW to GW
-GBaseload = GBaseload / 1000. # MW to GW
+
+# =============================================================================
+# Be careful about Nodel or np.unique(PVl/Windl) when zones don't have a technology
+# =============================================================================
+pv_zs_in_n = [np.where(PVl==node)[0] + 1 for node in Nodel] 
+wind_zs_in_n = [np.where(Windl==node)[0] + 1 for node in Nodel]
+
+import_lines = [np.where(network[:,0]==n)[0] + 1 for n in range(nodes)]
+export_lines = [np.where(network[:,1]==n)[0] + 1 for n in range(nodes)]
 
 if scenario >= 21:
     CostPH, CostDC = -1, -1
 else:
     CostPH, CostDC = 0,0 
 
-nyears = 4 
+nyears = 1
 
 leapdays = (nyears+(4-59/365))//4
 
@@ -39,7 +45,7 @@ model.windl = pyo.RangeSet(len(Windl))
 model.lines = pyo.RangeSet(len(network))
 model.nodes = pyo.RangeSet(nodes)
 
-model.t = pyo.RangeSet(ndays) # first 4 years
+model.t = pyo.RangeSet(48*ndays) 
 
 model.cpv = pyo.Var(
     model.pvl,   
@@ -72,10 +78,6 @@ model.chvdc = pyo.Var(
     initialize=dict(zip(range(1, len(network)+1), len(network)*[50.])),
     )
 
-model.gpv =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals, initialize=lambda m, t, n: sum((TSPV[t-1, n-1] * m.cpv[z+1] for z in np.where(PVl_int==Nodel_int[n-1])[0])))    
-model.gwind =   pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals, initialize=lambda m, t, n: sum((TSWind[t-1, n-1] * m.cwind[z+1] for z in np.where(Windl_int==Nodel_int[n-1])[0])))
-
-model.eload = pyo.Param(model.t, model.nodes, domain=pyo.Reals, rule=lambda m, t, n: MLoad[t-1, n-1] - GBaseload[t-1, n-1])
 model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, len(network)+1), factor[4:11][network_mask])))
 
 model.charge =  pyo.Var(model.t, model.nodes, domain=pyo.Reals)
@@ -85,19 +87,19 @@ model.hydro =   pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 model.bio =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 model.spillage =pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 
-model.constr_gpv =   pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.gpv[t, n]   == sum((TSPV[t-1, n-1] *   m.cpv[z+1]   for z in np.where(PVl_int==  Nodel_int[n-1])[0])))
-model.constr_gwind = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.gwind[t, n] == sum((TSWind[t-1, n-1] * m.cwind[z+1] for z in np.where(Windl_int==Nodel_int[n-1])[0])))
-
 model.constr_charge_power_lower = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n:-m.cphp[n] <= m.charge[t, n])
 model.constr_charge_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.charge[t, n] <= m.cphp[n])
+
+model.constr_storage_energy_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.storage[t, n] <= m.cphs[n])
 
 model.constr_hydro_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.hydro[t, n] <= CHydro[n-1])
 model.constr_bio_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.bio[t, n] <= CBio[n-1])
 
-model.constr_storage_energy_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.storage[t, n] <= m.cphs[n])
+model.constr_hvdc_line_power_lower = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: sum((m.hvdc[t, l] for n in m.nodes)) >= -m.chvdc[l])
+model.constr_hvdc_line_power_upper = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: sum((m.hvdc[t, l] for n in m.nodes)) <= m.chvdc[l])
 
-model.constr_hvdc_lower = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l:-m.chvdc[l] <= m.hvdc[t, l])
-model.constr_hvdc_upper = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc[t, l] <= m.chvdc[l])
+model.constr_max_hydro = pyo.Constraint(rule=lambda m: pyo.summation(model.hydro) <= 20_000 * nyears)
+
 
 def constr_state_of_charge(m, t, n):
     if t==1:
@@ -108,16 +110,17 @@ def constr_state_of_charge(m, t, n):
 model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
 
 
-
 def constr_power_balance_lower(m, t, n):
-    return (m.eload[t, n] - m.gpv[t, n] - m.gwind[t, n] - m.hydro[t,n] - m.bio[t,n] - m.charge[t,n] 
-            - sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) 
-            + sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) + m.spillage[t, n] 
+    return (MLoad[t-1, n-1] + m.spillage[t, n] 
+            - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
+             - m.hydro[t,n] - m.bio[t,n] - m.charge[t,n] 
+            - sum((m.hvdc[t, l] for l in import_lines[n-1])) + sum((m.hvdc[t, l] for l in export_lines[n-1]))
             ) >= -0.001
 def constr_power_balance_upper(m, t, n):
-    return (m.eload[t, n] - m.gpv[t, n] - m.gwind[t, n] - m.hydro[t,n] - m.bio[t,n] - m.charge[t,n] 
-            - sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) 
-            + sum((m.hvdc[t, l+1] for l in np.where(network[:,0] == n-1)[0])) + m.spillage[t, n] 
+    return (MLoad[t-1, n-1] + m.spillage[t, n] 
+            - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
+            - m.hydro[t,n] - m.bio[t,n] - m.charge[t,n] 
+            - sum((m.hvdc[t, l] for l in import_lines[n-1])) + sum((m.hvdc[t, l] for l in export_lines[n-1]))
             ) <= 0.001
 
 model.constr_power_balance_upper = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance_upper)
@@ -133,7 +136,7 @@ def objective(m):
         factor[11] * pyo.summation(m.cpv) +
         factor[12] * pyo.summation(m.cwind) + 
         factor[13] * pyo.summation(m.hydro)/ 1000. +
-        (factor[13]+0.000_001) * pyo.summation(m.bio)/ 1000. +
+        (factor[13]+0.000_001) * pyo.summation(m.bio)/ 1000. + # use hydro first
         factor[14] * CostPH +
         factor[15] * CostDC +
 
@@ -159,10 +162,11 @@ print("Optimisation took:", end-start)
 
 
 
-# model.display()
-
 model.OBJ.display()
 
+Charge = np.array([model.charge[i].value for i in model.charge]).reshape(-1, nodes)
+Storage = np.array([model.storage[i].value for i in model.storage]).reshape(-1, nodes)
+Hydro = np.array([model.hydro[i].value for i in model.hydro]).reshape(-1, nodes)
 
-
+        
 

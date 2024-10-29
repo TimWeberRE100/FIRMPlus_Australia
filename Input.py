@@ -47,7 +47,9 @@ CBaseload = np.array([0, 0, 0, 0, 0, 1.0, 0, 0]) # 24/7, GW
 CPeak = CHydro + CBio - CBaseload # GW
 
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
-DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400]) * 0.03 * pow(10, -3)
+DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400, 
+                   700, 
+                   ]) * 0.03 * pow(10, -3)
 
 efficiency = 0.8
 factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
@@ -61,6 +63,8 @@ network = np.array([[0, 3], #FNQ-QLD
                     [2, 4], #NT-SA
                     [4, 7], #SA-WA
                     [5, 6], #TAS-VIC
+                    
+                    [4, 6], #SA-VIC
                     ], dtype=np.int64)
     
 if scenario<=17:

@@ -8,10 +8,12 @@ import pyomo.environ as pyo
 from argparse import ArgumentParser
 
 parser = ArgumentParser()
-parser.add_argument('-s', default=21, type=int, required=False, help='11, 12, 13, ...')
+parser.add_argument('-s', default=21, type=int, required=False, help='scenario')
+parser.add_argument('-y', default=10, type=int, required=False, help='no. of years')
 args = parser.parse_args()
 
 scenario = args.s
+years = args.y
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
 PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)
@@ -39,8 +41,6 @@ DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400,
 
 efficiency = 0.8 # round trip efficiency of storage
 factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
-
-firstyear, finalyear, timestep = (2020, 2029, 1)
 
 network = np.array([[0, 3], #FNQ-QLD
                     [1, 3], #NSW-QLD
@@ -108,12 +108,14 @@ if scenario >= 31:
     Nodel, PVl, Windl = [np.unique(x)  for x in (Nodel, PVl, Windl)]
     
 intervals, nodes = MLoad.shape
-years = int(resolution * intervals / 8760)
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
 pidx, widx, sidx = (pzones, pzones + wzones, pzones + wzones + nodes)
 
 energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
+
+firstyear = 2020
+finalyear = firstyear+years-1
 
 nhvdc = network_mask.sum()
 
@@ -129,11 +131,11 @@ def countleaps(startyear, finalyear):
 
 #%%
 class Solution:
-    def __init__(self, model, years=years, scalefactor=1.0, leapdays=True):
+    def __init__(self, model, years=years, leapdays=True):
         self.scenario, self.nodes = scenario, nodes
         self.Nodel, self.PVl, self.Windl = Nodel, PVl, Windl
         
-        self.network, self.network_mask, self.DCloss = network, network_mask, DCloss
+        self.network, self.network_mask, self.DCloss = network, network_mask, DCloss[network_mask]
         self.import_lines = [np.where(self.network[:,0]==n)[0] for n in range(nodes)]
         self.export_lines = [np.where(self.network[:,1]==n)[0] for n in range(nodes)]
         
@@ -146,21 +148,22 @@ class Solution:
         self.StartCharge, self.efficiency = StartCharge, efficiency
         
         # capacities in GW and GWh
-        self.cpv =   np.array([model.cpv[i].value   for i in model.cpv])  / scalefactor
-        self.cwind = np.array([model.cwind[i].value for i in model.cwind])/ scalefactor
-        self.cphp =  np.array([model.cphp[i].value  for i in model.cphp]) / scalefactor
-        self.cphe =  np.array([model.cphe[i].value  for i in model.cphe]) / scalefactor
-        self.chvdc = np.array([model.chvdc[i].value for i in model.chvdc])/ scalefactor
+        self.cpv =   np.array([model.cpv[i].value   for i in model.cpv])
+        self.cwind = np.array([model.cwind[i].value for i in model.cwind])
+        self.cphp =  np.array([model.cphp[i].value  for i in model.cphp])
+        self.cphe =  np.array([model.cphe[i].value  for i in model.cphe]) 
+        self.chvdc = np.array([model.chvdc[i].value for i in model.chvdc])
         self.chydro = CHydro
         self.cbio = CBio
 
         # operations in MW and MWh
-        self.Charge =    np.array([model.charge[i].value    for i in model.charge]   ).reshape(-1, nodes) * 1000. / scalefactor  #GW to MW
-        self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000. / scalefactor 
-        self.Storage =   np.array([model.storage[i].value   for i in model.storage]  ).reshape(-1, nodes) * 1000. / scalefactor 
-        self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro]    ).reshape(-1, nodes) * 1000. / scalefactor 
-        self.Bio =       np.array([model.bio[i].value       for i in model.bio]      ).reshape(-1, nodes) * 1000. / scalefactor
-        self.Hvdc = np.array([model.hvdc[i].value for i in model.hvdc]).reshape(-1, nhvdc) * 1000. / scalefactor 
+        self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000.  #GW to MW
+        self.Charge =    np.array([model.charge[i].value    for i in model.charge   ]).reshape(-1, nodes) * 1000.
+        self.Storage =   np.array([model.storage[i].value   for i in model.storage  ]).reshape(-1, nodes) * 1000.  
+        self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro    ]).reshape(-1, nodes) * 1000. 
+        self.Bio =       np.array([model.bio[i].value       for i in model.bio      ]).reshape(-1, nodes) * 1000.
+        self.Hvdc =      np.array([model.hvdc[i].value      for i in model.hvdc     ]).reshape(-1, nhvdc) * 1000. 
+
         self.Transmission = np.empty_like(self.Charge)
         for t in range(self.Charge.shape[0]):
             for n in range(self.Charge.shape[1]):
@@ -168,7 +171,7 @@ class Solution:
                     sum((self.Hvdc[t, l]*(1-self.DCloss[l-1]) for l in self.import_lines[n])) 
                     - sum((self.Hvdc[t, l] for l in self.export_lines[n]))
                     )
-        self.Transmission * 1000. / scalefactor 
+        self.Transmission * 1000.  
         self.PV = self.cpv*TSPV[:self.intervals, :] * 1000.
         self.Wind = self.cwind*TSWind[:self.intervals, :] * 1000.
         self.PV   = np.stack([self.PV[:,   np.where(self.PVl  ==node)[0]].sum(axis=1) for node in self.Nodel]).T

@@ -18,7 +18,7 @@ def Debug(solution):
         # supply-demand
         assert (np.abs(solution.Load[t] + solution.Spillage[t] + solution.Charge[t]
                        - solution.Discharge[t] - solution.Hydro[t] - solution.Bio[t]
-                       - solution.Transmission[t] - solution.PV[t] - solution.Wind[t]) <= 100.0
+                       - solution.Transmission[t] - solution.PV[t] - solution.Wind[t]) <= 1#MW
                 ).all(), f"Supply demand unbalanced. t: {t}"
 
         # Discharge, Charge and Storage
@@ -27,13 +27,13 @@ def Debug(solution):
         else:
             assert (np.abs(solution.Storage[t-1] - solution.Storage[t] 
                            + solution.Charge[t-1] * solution.resolution * solution.efficiency
-                           - solution.Discharge[t-1] * solution.resolution) <= 10).all(), f"Storage dis/charge accounting incorrect. t: {t}"
+                           - solution.Discharge[t-1] * solution.resolution) <= 1).all(), f"Storage dis/charge accounting incorrect. t: {t}"
 
-    assert (np.amax(solution.Charge, axis=0) - solution.cphp <= 1).all(), "Storage charging exceeds bounds."
-    assert (np.amax(solution.Discharge, axis=0) - solution.cphp <= 1).all(), "Storage discharging exceeds bounds."
-    assert (np.amax(solution.Storage, axis=0) - solution.cphe <= 1).all(), "Storage level exceeds bounds."
-    assert (np.amax(solution.Hvdc, axis=0) - solution.chvdc <= 1).all(), "Transmission exceeds line capacity."
-    assert (np.amin(solution.Hvdc, axis=0) + solution.chvdc >= 1).all(), "Transmission exceeds line capacity."
+    assert (np.amax(solution.Charge, axis=0)    - 1000*solution.cphp  <= 1).all(), "Storage charging exceeds bounds."
+    assert (np.amax(solution.Discharge, axis=0) - 1000*solution.cphp  <= 1).all(), "Storage discharging exceeds bounds."
+    assert (np.amax(solution.Storage, axis=0)   - 1000*solution.cphe  <= 1).all(), "Storage level exceeds bounds."
+    assert (np.amax(solution.Hvdc, axis=0)      - 1000*solution.chvdc <= 1).all(), "Transmission exceeds line capacity."
+    assert (np.amin(solution.Hvdc, axis=0)      + 1000*solution.chvdc >= 1).all(), "Transmission exceeds line capacity."
 
     assert (solution.Hvdc.sum(axis=1) <= 0.1).all(), "HVDC Imports and Exports are mismatched"
 
@@ -57,8 +57,7 @@ def LPGM(solution):
 
     header = ','.join(['Date & time', 'Demand', 'Solar photovoltaics', 'Wind', 'Hydropower', 'Biomass',
                       'PHES-Discharge', 'PHES-Charge', 'Energy spillage', 'PHES-Storage'] +
-                      [f'{solution.Nodel[n[0]]}-{solution.Nodel[n[1]]
-                          }' for n in solution.network]
+                      [f'{solution.Nodel[n[0]]}-{solution.Nodel[n[1]]}' for n in solution.network]
                       )
 
     np.savetxt(f'Results/S{solution.scenario}.csv', C,fmt='%s', delimiter=',', header=header, comments='')

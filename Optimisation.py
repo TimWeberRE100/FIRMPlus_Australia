@@ -27,29 +27,16 @@ if scenario >= 21:
 else:
     LegPH, LegINTC = 0,0 
 
-nyears = 1
+leapdays = (years+(4-59/365))//4
 
-leapdays = (nyears+(4-59/365))//4
-
-ndays = 365*nyears + leapdays
+ndays = 365*years + leapdays
 intervals = int(ndays*24/resolution)
 
 #%%
 print("Instantiating optimiser:", dt.now())
 model = pyo.ConcreteModel()
 
-# Computation is done in GW rather than MW - this means that constraint tolerances 
-#    are actually rather large (10s of MW). 
-# I have been having difficulty setting the constraint violation tolerance.
-#    My current solution is to scale all numbers a little so that the default 
-#    constraint violation tolerance is more appropriate. 
-#    note: excessively increasing this increases optimisation time 
-sf = 100 # scale factor
-# sf 10 means computation is done based on 1 = 100 MW - constraint tolerance
-#    is ~ single digit MW
-
-adj_energy = (MLoad[:intervals, :].sum() * pow(10, -6) * resolution / nyears)
-
+adj_energy = (MLoad[:intervals, :].sum() * pow(10, -6) * resolution / years)
 
 model.pvl = pyo.RangeSet(npv)
 model.windl = pyo.RangeSet(nwind)
@@ -61,32 +48,32 @@ model.t = pyo.RangeSet(intervals)
 model.cpv = pyo.Var(
     model.pvl,   
     domain=pyo.NonNegativeReals, 
-    bounds=dict(zip(range(1, npv+1), zip(npv*[0.], npv*[sf*50.]))),
-    initialize=dict(zip(range(1, npv+1), npv*[sf*10.])),
+    bounds=dict(zip(range(1, npv+1), zip(npv*[0.], npv*[50.]))),
+    initialize=dict(zip(range(1, npv+1), npv*[10.])),
     )
 model.cwind = pyo.Var(
     model.windl, 
     domain=pyo.NonNegativeReals, 
-    bounds=dict(zip(range(1, nwind+1), zip(nwind*[0.], nwind*[sf*50.]))),
-    initialize=dict(zip(range(1, nwind+1)  , nwind*[sf*10.])),
+    bounds=dict(zip(range(1, nwind+1), zip(nwind*[0.], nwind*[50.]))),
+    initialize=dict(zip(range(1, nwind+1)  , nwind*[10.])),
     )
 model.cphp = pyo.Var(
     model.nodes, 
     domain=pyo.NonNegativeReals, 
-    bounds=dict(zip(range(1, nodes+1), zip(sf*contingency, nodes*[sf*50.]))),
-    initialize=dict(zip(range(1, nodes+1), nodes*[sf*10.])),
+    bounds=dict(zip(range(1, nodes+1), zip(contingency, nodes*[50.]))),
+    initialize=dict(zip(range(1, nodes+1), nodes*[10.])),
     )
 model.cphe = pyo.Var(
     model.nodes, 
     domain=pyo.NonNegativeReals, 
-    bounds=dict(zip(range(1, nodes+1), zip(nodes*[0.], nodes*[sf*500.]))),
-    initialize=dict(zip(range(1, nodes+1), nodes*[sf*100.])),
+    bounds=dict(zip(range(1, nodes+1), zip(nodes*[0.], nodes*[500.]))),
+    initialize=dict(zip(range(1, nodes+1), nodes*[100.])),
     )
 model.chvdc = pyo.Var(
     model.lines, 
     domain=pyo.NonNegativeReals, 
-    bounds=dict(zip(range(1, nhvdc+1), zip(nhvdc*[0.], nhvdc*[sf*100.]))),
-    initialize=dict(zip(range(1, nhvdc+1), nhvdc*[sf*50.])),
+    bounds=dict(zip(range(1, nhvdc+1), zip(nhvdc*[0.], nhvdc*[100.]))),
+    initialize=dict(zip(range(1, nhvdc+1), nhvdc*[50.])),
     )
 
 model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, nhvdc+1), factor[4:12][network_mask])))
@@ -113,8 +100,8 @@ model.constr_hvdc_line_power_lower = pyo.Constraint(model.t, model.lines, rule=l
 model.constr_hvdc_line_power_upper = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc[t, l] <= m.chvdc[l])
 model.constr_import_export_balance = pyo.Constraint(model.t, rule=lambda m, t: sum(m.hvdc[t, l] for l in m.lines) == 0)
 
-model.constr_max_hydrobio = pyo.Constraint(rule=lambda m: pyo.summation(m.hydro)*0.001*resolution/nyears/sf 
-                                           + pyo.summation(m.bio)*0.001*resolution/nyears/sf <= 20.0) #TWh p.a.
+model.constr_max_hydrobio = pyo.Constraint(rule=lambda m: pyo.summation(m.hydro)*0.001*resolution/years
+                                           + pyo.summation(m.bio)*0.001*resolution/years <= 20.0) #TWh p.a.
 
 def constr_state_of_charge(m, t, n):
     if t==1:
@@ -124,9 +111,8 @@ def constr_state_of_charge(m, t, n):
 
 model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
 
-
 def constr_power_balance(m, t, n):
-    return (sf*MLoad[t-1, n-1] + m.charge[t,n] 
+    return (MLoad[t-1, n-1] + m.charge[t,n] 
             - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
             - m.hydro[t,n] - m.bio[t,n] - m.discharge[t,n] 
             - sum((m.hvdc[t, l]*(1-masked_DCloss[l-1]) for l in import_lines[n-1])) + sum((m.hvdc[t, l] for l in export_lines[n-1]))
@@ -134,18 +120,17 @@ def constr_power_balance(m, t, n):
 
 model.constr_power_balance = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance)
 
-model.CostPV = pyo.Expression(   rule=lambda m: factor[0] *pyo.summation(m.cpv)  /sf)
-model.CostWind = pyo.Expression( rule=lambda m: factor[1] *pyo.summation(m.cwind)/sf)
-model.CostPH = pyo.Expression(   rule=lambda m: factor[2] *pyo.summation(m.cphp) /sf +
-                                                factor[3] *pyo.summation(m.cphe) /sf +
+model.CostPV =    pyo.Expression(rule=lambda m: factor[0] *pyo.summation(m.cpv)  )
+model.CostWind =  pyo.Expression(rule=lambda m: factor[1] *pyo.summation(m.cwind))
+model.CostPH =    pyo.Expression(rule=lambda m: factor[2] *pyo.summation(m.cphp)  +
+                                                factor[3] *pyo.summation(m.cphe)  +
                                                 factor[15]*LegPH)
-model.CostHydro = pyo.Expression(rule=lambda m: factor[14]*pyo.summation(m.hydro)*0.001*resolution/nyears/sf)
-model.CostBio = pyo.Expression(  rule=lambda m: factor[14]*pyo.summation(m.bio)*0.001*resolution/nyears/sf)
-model.CostDC = pyo.Expression(   rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc)/sf + 
+model.CostHydro = pyo.Expression(rule=lambda m: factor[14]*pyo.summation(m.hydro)*0.001*resolution/years)
+model.CostBio =   pyo.Expression(rule=lambda m: factor[14]*pyo.summation(m.bio)*0.001*resolution/years)
+model.CostDC =    pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc) + 
                                                 factor[16]*LegINTC)
-model.CostAC = pyo.Expression(   rule=lambda m: factor[12]*pyo.summation(m.cpv)  /sf +
-                                                factor[13]*pyo.summation(m.cwind)/sf)
-
+model.CostAC =    pyo.Expression(rule=lambda m: factor[12]*pyo.summation(m.cpv)   +
+                                                factor[13]*pyo.summation(m.cwind))
 
 def objective(m):
     return (m.CostPV + m.CostWind + m.CostPH + m.CostHydro + m.CostBio +
@@ -153,20 +138,19 @@ def objective(m):
     
 model.OBJ = pyo.Objective(rule=objective)
 
-
-opt = pyo.SolverFactory('gurobi')
+optimiser = pyo.SolverFactory('gurobi')
 
 start=dt.now()
 print("Optimisation starts:", start)
-opt.solve(model)
+optimiser.solve(model)
 end=dt.now()
 print("Optimisation took:", end-start)
 
-
-#%%
 model.OBJ.display()
 
-S = Solution(model, nyears, scalefactor=sf)
+#%%
+
+S = Solution(model, years)
 
 print('pv:', S.cpv)
 print('wind:', S.cwind)
@@ -184,7 +168,6 @@ except FileNotFoundError:
     with open(f'Results/Optimisation_resultx{scenario}.csv', 'w', newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow([S.OBJ] + list(S.cpv) + list(S.cwind) + list(S.cphp) + list(S.cphe) + list(S.chvdc))
-
 
 from Statistics import Information
 Information(S)

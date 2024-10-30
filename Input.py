@@ -117,6 +117,8 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 nhvdc = network_mask.sum()
 
+MLoad = MLoad / 1000. #MW to GW
+
 def countleaps(startyear, finalyear):
     leaps=0
     for y in range(startyear, finalyear+1):
@@ -153,12 +155,12 @@ class Solution:
         self.cbio = CBio
 
         # operations in MW and MWh
-        self.Charge =    np.array([model.charge[i].value    for i in model.charge]   ).reshape(-1, nodes) / scalefactor * 1000. #GW to MW
-        self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) / scalefactor * 1000.
-        self.Storage =   np.array([model.storage[i].value   for i in model.storage]  ).reshape(-1, nodes) / scalefactor * 1000.
-        self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro]    ).reshape(-1, nodes) / scalefactor * 1000.
-        self.Bio =       np.array([model.bio[i].value       for i in model.bio]      ).reshape(-1, nodes) / scalefactor * 1000.
-        self.Hvdc = np.array([model.hvdc[i].value for i in model.hvdc]).reshape(-1, nhvdc) / scalefactor * 1000.
+        self.Charge =    np.array([model.charge[i].value    for i in model.charge]   ).reshape(-1, nodes) * 1000. / scalefactor  #GW to MW
+        self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000. / scalefactor 
+        self.Storage =   np.array([model.storage[i].value   for i in model.storage]  ).reshape(-1, nodes) * 1000. / scalefactor 
+        self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro]    ).reshape(-1, nodes) * 1000. / scalefactor 
+        self.Bio =       np.array([model.bio[i].value       for i in model.bio]      ).reshape(-1, nodes) * 1000. / scalefactor
+        self.Hvdc = np.array([model.hvdc[i].value for i in model.hvdc]).reshape(-1, nhvdc) * 1000. / scalefactor 
         self.Transmission = np.empty_like(self.Charge)
         for t in range(self.Charge.shape[0]):
             for n in range(self.Charge.shape[1]):
@@ -166,12 +168,12 @@ class Solution:
                     sum((self.Hvdc[t, l]*(1-self.DCloss[l-1]) for l in self.import_lines[n])) 
                     - sum((self.Hvdc[t, l] for l in self.export_lines[n]))
                     )
-        self.Transmission / scalefactor * 1000.
+        self.Transmission * 1000. / scalefactor 
         self.PV = self.cpv*TSPV[:self.intervals, :] * 1000.
         self.Wind = self.cwind*TSWind[:self.intervals, :] * 1000.
         self.PV   = np.stack([self.PV[:,   np.where(self.PVl  ==node)[0]].sum(axis=1) for node in self.Nodel]).T
         self.Wind = np.stack([self.Wind[:, np.where(self.Windl==node)[0]].sum(axis=1) for node in self.Nodel]).T
-        self.Load = MLoad[:self.intervals, :]
+        self.Load = 1000. * MLoad[:self.intervals, :]
         
         self.Spillage = -np.minimum(0, self.Load + self.Charge - self.Discharge - self.Hydro
                          - self.Bio - self.PV - self.Wind - self.Transmission)

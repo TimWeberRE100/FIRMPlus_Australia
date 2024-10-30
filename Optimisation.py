@@ -11,7 +11,6 @@ from pyomo.opt import SolverFactory
 
 from Input import * 
 
-MLoad = MLoad / 1000. # MW to GW
 masked_DCloss = DCloss[network_mask]
 
 pv_zs_in_n = [np.where(PVl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
@@ -49,7 +48,7 @@ sf = 100 # scale factor
 # sf 10 means computation is done based on 1 = 100 MW - constraint tolerance
 #    is ~ single digit MW
 
-adj_energy = (MLoad[:intervals, :].sum() * pow(10, -6) * resolution / years)
+adj_energy = (MLoad[:intervals, :].sum() * pow(10, -6) * resolution / nyears)
 
 
 model.pvl = pyo.RangeSet(npv)
@@ -114,7 +113,8 @@ model.constr_hvdc_line_power_lower = pyo.Constraint(model.t, model.lines, rule=l
 model.constr_hvdc_line_power_upper = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc[t, l] <= m.chvdc[l])
 model.constr_import_export_balance = pyo.Constraint(model.t, rule=lambda m, t: sum(m.hvdc[t, l] for l in m.lines) == 0)
 
-model.constr_max_hydro = pyo.Constraint(rule=lambda m: pyo.summation(model.hydro) <= sf*20_000 * nyears)
+model.constr_max_hydrobio = pyo.Constraint(rule=lambda m: pyo.summation(m.hydro)*0.001*resolution/nyears/sf 
+                                           + pyo.summation(m.bio)*0.001*resolution/nyears/sf <= 20.0) #TWh p.a.
 
 def constr_state_of_charge(m, t, n):
     if t==1:

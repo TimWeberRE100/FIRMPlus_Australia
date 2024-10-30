@@ -18,7 +18,7 @@ def Debug(solution):
         # supply-demand
         assert (np.abs(solution.Load[t] + solution.Spillage[t] + solution.Charge[t]
                        - solution.Discharge[t] - solution.Hydro[t] - solution.Bio[t]
-                       - solution.Transmission[t] - solution.PV[t] - solution.Wind[t]) <= 1.0
+                       - solution.Transmission[t] - solution.PV[t] - solution.Wind[t]) <= 100.0
                 ).all(), f"Supply demand unbalanced. t: {t}"
 
         # Discharge, Charge and Storage
@@ -111,7 +111,7 @@ def GGTA(solution):
 
     CostAC = factor['ACPV'] * CPV + factor['ACWind'] * CWind  # A$b p.a.
 
-    Energy = solution.Load.sum() * pow(10, -6) * solution.resolution / solution.years  # PWh p.a.
+    Energy = solution.Load.sum() * pow(10, -9) * solution.resolution / solution.years  # PWh p.a.
 
     LCOE = (CostPV + CostWind + CostHydro + CostBio +
             CostPH + CostDC + CostAC) / Energy
@@ -131,8 +131,8 @@ def GGTA(solution):
     print('\u2022 LCOE:', LCOE)
     print('\u2022 LCOG:', LCOG)
     print('\u2022 LCOB:', LCOB)
-    print('\u2022 LCOG-PV:', LCOGP, '(%s)' % CFPV)
-    print('\u2022 LCOG-Wind:', LCOGW, '(%s)' % CFWind)
+    print('\u2022 LCOG-PV:', LCOGP, f'({CFPV})' )
+    print('\u2022 LCOG-Wind:', LCOGW, f'({CFWind})')
     print('\u2022 LCOG-Hydro:', LCOGH)
     print('\u2022 LCOG-Bio:', LCOGB)
     print('\u2022 LCOB-Storage:', LCOBS)

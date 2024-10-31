@@ -16,8 +16,8 @@ masked_DCloss = DCloss[network_mask]
 pv_zs_in_n = [np.where(PVl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
 wind_zs_in_n = [np.where(Windl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
 
-import_lines = [np.where(network[:,0]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
-export_lines = [np.where(network[:,1]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
+pos_export_lines = [np.where(network[:,0]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
+neg_export_lines = [np.where(network[:,1]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
 
 npv = len(PVl)
 nwind = len(Windl)
@@ -79,9 +79,10 @@ model.chvdc = pyo.Var(
 model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, nhvdc+1), factor[4:12][network_mask])))
 
 model.charge =  pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
-model.discharge =  pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
+model.discharge=pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 model.storage = pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
-model.hvdc =    pyo.Var(model.t, model.lines, domain=pyo.Reals)
+model.hvdc_pos = pyo.Var(model.t, model.lines, domain=pyo.NonNegativeReals)
+model.hvdc_neg = pyo.Var(model.t, model.lines, domain=pyo.NonNegativeReals)
 model.hydro =   pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 model.bio =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
 
@@ -96,9 +97,9 @@ model.constr_storage_energy_upper = pyo.Constraint(model.t, model.nodes, rule=la
 model.constr_hydro_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.hydro[t, n] <= CHydro[n-1])
 model.constr_bio_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.bio[t, n] <= CBio[n-1])
 
-model.constr_hvdc_line_power_lower = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc[t, l] >= -m.chvdc[l])
-model.constr_hvdc_line_power_upper = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc[t, l] <= m.chvdc[l])
-model.constr_import_export_balance = pyo.Constraint(model.t, rule=lambda m, t: sum(m.hvdc[t, l] for l in m.lines) == 0)
+model.constr_hvdc_power_import = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc_pos[t, l] <= m.chvdc[l])
+model.constr_hvdc_power_export = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc_neg[t, l] <= m.chvdc[l])
+
 
 model.constr_max_hydrobio = pyo.Constraint(rule=lambda m: pyo.summation(m.hydro)*0.001*resolution/years
                                            + pyo.summation(m.bio)*0.001*resolution/years <= 20.0) #TWh p.a.
@@ -111,11 +112,13 @@ def constr_state_of_charge(m, t, n):
 
 model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
 
+    
 def constr_power_balance(m, t, n):
     return (MLoad[t-1, n-1] + m.charge[t,n] 
             - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
             - m.hydro[t,n] - m.bio[t,n] - m.discharge[t,n] 
-            - sum((m.hvdc[t, l]*(1-masked_DCloss[l-1]) for l in import_lines[n-1])) + sum((m.hvdc[t, l] for l in export_lines[n-1]))
+            + sum((m.hvdc_pos[t, l] - m.hvdc_neg[t, l]*(1-masked_DCloss[l-1]) for l in pos_export_lines[n-1]))
+            + sum((m.hvdc_neg[t, l] - m.hvdc_pos[t, l]*(1-masked_DCloss[l-1]) for l in neg_export_lines[n-1]))
             ) <= 0.0
 
 model.constr_power_balance = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance)

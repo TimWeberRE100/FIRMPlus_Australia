@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 
 parser = ArgumentParser()
 parser.add_argument('-s', default=21, type=int, required=False, help='scenario')
-parser.add_argument('-y', default=10, type=int, required=False, help='no. of years')
+parser.add_argument('-y', default=1, type=int, required=False, help='no. of years')
 args = parser.parse_args()
 
 scenario = args.s
@@ -136,9 +136,9 @@ class Solution:
         self.Nodel, self.PVl, self.Windl = Nodel, PVl, Windl
         
         self.network, self.network_mask, self.DCloss = network, network_mask, DCloss[network_mask]
-        self.import_lines = [np.where(self.network[:,0]==n)[0] for n in range(nodes)]
-        self.export_lines = [np.where(self.network[:,1]==n)[0] for n in range(nodes)]
-        
+        self.pos_export_lines = [np.where(network[:,0]==n)[0] for n in range(nodes)] # pyomo uses 1-indexing
+        self.neg_export_lines = [np.where(network[:,1]==n)[0] for n in range(nodes)] # pyomo uses 1-indexing
+
         self.firstyear, self.years = firstyear, years
         self.finalyear = self.firstyear+self.years
         self.resolution = resolution
@@ -162,15 +162,18 @@ class Solution:
         self.Storage =   np.array([model.storage[i].value   for i in model.storage  ]).reshape(-1, nodes) * 1000.  
         self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro    ]).reshape(-1, nodes) * 1000. 
         self.Bio =       np.array([model.bio[i].value       for i in model.bio      ]).reshape(-1, nodes) * 1000.
-        self.Hvdc =      np.array([model.hvdc[i].value      for i in model.hvdc     ]).reshape(-1, nhvdc) * 1000. 
+        Hvdc_pos =       np.array([model.hvdc_pos[i].value  for i in model.hvdc_pos ]).reshape(-1, nhvdc) * 1000. 
+        Hvdc_neg =       np.array([model.hvdc_neg[i].value  for i in model.hvdc_neg ]).reshape(-1, nhvdc) * 1000. 
+        self.Hvdc = Hvdc_pos - Hvdc_neg
 
         self.Transmission = np.empty_like(self.Charge)
         for t in range(self.Charge.shape[0]):
             for n in range(self.Charge.shape[1]):
-                self.Transmission[t, n] = (
-                    sum((self.Hvdc[t, l]*(1-self.DCloss[l-1]) for l in self.import_lines[n])) 
-                    - sum((self.Hvdc[t, l] for l in self.export_lines[n]))
-                    )
+                self.Transmission[t, n]= (
+                    + sum((Hvdc_pos[t, l] - Hvdc_neg[t, l]*(1-self.DCloss[l]) for l in self.pos_export_lines[n]))
+                    + sum((Hvdc_neg[t, l] - Hvdc_pos[t, l]*(1-self.DCloss[l]) for l in self.neg_export_lines[n]))
+                )
+                
         self.Transmission * 1000.  
         self.PV = self.cpv*TSPV[:self.intervals, :] * 1000.
         self.Wind = self.cwind*TSWind[:self.intervals, :] * 1000.
@@ -179,6 +182,6 @@ class Solution:
         self.Load = 1000. * MLoad[:self.intervals, :]
         
         self.Spillage = -np.minimum(0, self.Load + self.Charge - self.Discharge - self.Hydro
-                         - self.Bio - self.PV - self.Wind - self.Transmission)
+                         - self.Bio - self.PV - self.Wind + self.Transmission)
         
         self.OBJ = pyo.value(model.OBJ)

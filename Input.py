@@ -140,10 +140,10 @@ class Solution:
         self.neg_export_lines = [np.where(network[:,1]==n)[0] for n in range(nodes)] # pyomo uses 1-indexing
 
         self.firstyear, self.years = firstyear, years
-        self.finalyear = self.firstyear+self.years
+        self.finalyear = self.firstyear+self.years-1
         self.resolution = resolution
         leaps = countleaps(self.firstyear, self.finalyear) if leapdays else 0
-        self.intervals = int((365 + leaps)*24/resolution)
+        self.intervals = int((years*365 + leaps)*24/resolution)
         
         self.StartCharge, self.efficiency = StartCharge, efficiency
         

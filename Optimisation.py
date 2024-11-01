@@ -100,7 +100,6 @@ model.constr_bio_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda 
 model.constr_hvdc_power_import = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc_pos[t, l] <= m.chvdc[l])
 model.constr_hvdc_power_export = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc_neg[t, l] <= m.chvdc[l])
 
-
 model.constr_max_hydrobio = pyo.Constraint(rule=lambda m: pyo.summation(m.hydro)*0.001*resolution/years
                                            + pyo.summation(m.bio)*0.001*resolution/years <= 20.0) #TWh p.a.
 

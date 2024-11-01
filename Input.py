@@ -160,6 +160,24 @@ class Solution:
         self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000.  #GW to MW
         self.Charge =    np.array([model.charge[i].value    for i in model.charge   ]).reshape(-1, nodes) * 1000.
         self.Storage =   np.array([model.storage[i].value   for i in model.storage  ]).reshape(-1, nodes) * 1000.  
+
+        # clip Charge and Discharge to remove simultaneous charging and discharging        
+        self.Charge, self.Discharge = np.maximum(0, self.Charge-self.Discharge), np.maximum(0, self.Discharge-self.Charge)
+        for t in range(1, intervals):
+            # recalculate storage level based on clipped charging/discharging
+            self.Storage[t] = np.maximum(
+                0, # storage should not be negative
+                np.minimum(
+                    self.cphe*1000., # storage should not exceed capacity
+                    self.Storage[t-1] - self.Discharge[t-1] * self.resolution + self.Charge[t-1] * self.resolution * self.efficiency
+                    )
+                )
+            # recalculate charge/discharge to match storage level changes (not exceeding (0, cphe))
+            self.Charge[t-1]    = np.minimum(self.Charge[t-1]   , np.maximum(0, (self.Storage[t] - self.Storage[t-1])/self.resolution/self.efficiency))
+            self.Discharge[t-1] = np.minimum(self.Discharge[t-1], np.maximum(0, (self.Storage[t-1] - self.Storage[t])/self.resolution))
+        #Storage exceeds bounds where charge too big - also check optimiser logic
+        
+        
         self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro    ]).reshape(-1, nodes) * 1000. 
         self.Bio =       np.array([model.bio[i].value       for i in model.bio      ]).reshape(-1, nodes) * 1000.
         Hvdc_pos =       np.array([model.hvdc_pos[i].value  for i in model.hvdc_pos ]).reshape(-1, nhvdc) * 1000. 

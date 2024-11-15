@@ -4,12 +4,16 @@
 # Licensed under the MIT Licence
 # Correspondence: bin.lu@anu.edu.au
 
-# from Input import *
-
 import numpy as np
 from datetime import datetime as dt
 from datetime import timedelta as td
+from warnings import warn
 
+class BehaviourWarning(Warning):
+    def __init__(self, message):
+        self.message=message
+    def __str__(self):
+        return repr(self.message)
 
 def Debug(solution):
     """Debugging"""
@@ -34,9 +38,15 @@ def Debug(solution):
     assert (np.amax(solution.Storage, axis=0)   - 1000*solution.cphe  <= 1).all(), "Storage level exceeds bounds."
     assert (np.amin(solution.Storage, axis=0)                         >= 0).all(), "Storage level goes negative"
     assert (np.amax(solution.Hvdc, axis=0)      - 1000*solution.chvdc <= 1).all(), "Transmission exceeds line capacity."
-    assert (np.amin(solution.Hvdc, axis=0)      + 1000*solution.chvdc <= 1).all(), "Transmission exceeds line capacity."
-
+    assert (np.amin(solution.Hvdc, axis=0)      + 1000*solution.chvdc >= -1).all(), "Transmission exceeds line capacity."
     assert (solution.Transmission.sum(axis=1) >= 0).all(), "DClosses are negative"
+
+    try: assert ((solution.Charge > 0.1) * (solution.Discharge > 0.1)).sum() == 0 
+    except AssertionError: warn("Simultaneous charging and discharging", BehaviourWarning)
+    try: assert ((solution.Spillage > 0.1) * (solution.Discharge > 0.1)).sum() == 0
+    except AssertionError: warn("Simultaneous discharge and spillage", BehaviourWarning)
+    try: assert ((solution.Transmission < 0.1) * (solution.Spillage > 0.1)).sum() == 0
+    except AssertionError: warn("Simultaneous import and spillage", BehaviourWarning)
 
     print('Debugging: everything is ok')
 
@@ -84,65 +94,23 @@ def LPGM(solution):
 def GGTA(solution):
     """GW, GWh, TWh p.a. and A$/MWh information"""
 
-    factor = np.genfromtxt('Data/factor.csv', dtype=None, delimiter=',', encoding=None)
-    factor = dict(factor)
-
-    CPV, CWind, CPHP, CPHS = solution.cpv.sum(), solution.cwind.sum(), solution.cphp.sum(), solution.cphe.sum()  # GW, GWh
-    CapHydrobio = solution.chydro.sum() + solution.cbio.sum()
-
-    GPV, GWind, GHydro, GBio = map(lambda x: x * pow(10, -6) * solution.resolution / solution.years,
-                                   (solution.PV.sum(), solution.Wind.sum(), solution.Hydro.sum(), solution.Bio.sum())) #TWh p.a.
-    GHydrobio = GHydro + GBio
-    CFPV, CFWind = (GPV / CPV / 8.76, GWind / CWind / 8.76)
-
-    CostPV = factor['PV'] * CPV  # A$b p.a.
-    CostWind = factor['Wind'] * CWind  # A$b p.a.
-    CostHydro = factor['Hydro'] * GHydro  # A$b p.a.
-    CostBio = factor['Hydro'] * GBio  # A$b p.a.
-    CostPH = factor['PHP'] * CPHP + factor['PHS'] * CPHS  # A$b p.a.
-    if solution.scenario >= 21:
-        CostPH -= factor['LegPH']
-
-    CostDC = np.array([factor['FQ'], factor['NQ'], factor['NS'], factor['NV'],
-                      factor['AS'], factor['SW'], factor['TV'], factor['SV']])[solution.network_mask]
-    CostDC = (CostDC * solution.chvdc).sum()  # A$b p.a.
-    if solution.scenario >= 21:
-        CostDC -= factor['LegINTC']
-
-    CostAC = factor['ACPV'] * CPV + factor['ACWind'] * CWind  # A$b p.a.
-
-    Energy = solution.Load.sum() * pow(10, -9) * solution.resolution / solution.years  # PWh p.a.
-
-    LCOE = (CostPV + CostWind + CostHydro + CostBio +
-            CostPH + CostDC + CostAC) / Energy
-    LCOG = (CostPV + CostWind + CostHydro + CostBio) * \
-            pow(10, 3) / (GPV + GWind + GHydro + GBio)
-    LCOGP = CostPV * pow(10, 3) / GPV if GPV != 0 else 0
-    LCOGW = CostWind * pow(10, 3) / GWind if GWind != 0 else 0
-    LCOGH = CostHydro * pow(10, 3) / GHydro if GHydro != 0 else 0
-    LCOGB = CostBio * pow(10, 3) / GBio if GBio != 0 else 0
-
-    LCOB = LCOE - LCOG
-    LCOBS = CostPH / Energy
-    LCOBT = (CostDC + CostAC) / Energy
-    LCOBL = LCOB - LCOBS - LCOBT
-
     print('Levelised costs of electricity:')
-    print('\u2022 LCOE:', LCOE)
-    print('\u2022 LCOG:', LCOG)
-    print('\u2022 LCOB:', LCOB)
-    print('\u2022 LCOG-PV:', LCOGP, f'({CFPV})' )
-    print('\u2022 LCOG-Wind:', LCOGW, f'({CFWind})')
-    print('\u2022 LCOG-Hydro:', LCOGH)
-    print('\u2022 LCOG-Bio:', LCOGB)
-    print('\u2022 LCOB-Storage:', LCOBS)
-    print('\u2022 LCOB-Transmission:', LCOBT)
-    print('\u2022 LCOB-Spillage & loss:', LCOBL)
+    print('\u2022 LCOE:', solution.LCOE)
+    print('\u2022 LCOG:', solution.LCOG)
+    print('\u2022 LCOB:', solution.LCOB)
+    print('\u2022 LCOG-PV:', solution.LCOGP, f'({solution.CFPV})' )
+    print('\u2022 LCOG-Wind:', solution.LCOGW, f'({solution.CFWind})')
+    print('\u2022 LCOG-Hydro:', solution.LCOGH)
+    print('\u2022 LCOG-Bio:', solution.LCOGB)
+    print('\u2022 LCOB-Storage:', solution.LCOBS)
+    print('\u2022 LCOB-Transmission:', solution.LCOBT)
+    print('\u2022 LCOB-Spillage & loss:', solution.LCOBL)
 
     D = np.atleast_2d(np.array(
-        [Energy, CPV, GPV, CWind, GWind, CapHydrobio, GHydrobio, CPHP, CPHS]
+        [solution.Energy, solution.cpv.sum(), solution.GPV, solution.cwind.sum(), solution.GWind, 
+         solution.chydro.sum() + solution.cbio.sum(), solution.GHydro + solution.GBio, solution.cphp.sum(), solution.cphe.sum()]
               + list(solution.chvdc)
-              + [LCOE, LCOG, LCOBS, LCOBT, LCOBL]))
+              + [solution.LCOE, solution.LCOG,solution.LCOBS, solution.LCOBT, solution.LCOBL]))
 
     header = ','.join(['Energy (PWh p.a.)', 'PV (GW)', 'PV (GWh p.a.)', 'Wind (GW)', 'Wind (GWh p.a.)',
                      'Hydro & Bio (GW)', 'Hydro & Bio (GWh p.a.)', 'Pumped Hydro capacity (GW)',
@@ -172,9 +140,10 @@ def Information(solution):
     return True
 
 if __name__ == '__main__':
-    pass
-# =============================================================================
-#     capacities=np.genfromtxt(
-#         f'Results/Optimisation_resultx{scenario}.csv', delimiter=',', dtype=float)
-#     Information(capacities)
-# =============================================================================
+    from Input import scenario, Solution
+    from Optimisation import reconstruct_from_capacities
+    capacities = np.genfromtxt(f"Results/Optimisation_resultx{scenario}.csv", delimiter=',')[1:]
+    
+    model = reconstruct_from_capacities(capacities)
+    S = Solution(model)
+    Information(S)

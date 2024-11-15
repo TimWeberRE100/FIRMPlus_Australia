@@ -109,7 +109,7 @@ if scenario >= 31:
     
 intervals, nodes = MLoad.shape
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
-pidx, widx, sidx = (pzones, pzones + wzones, pzones + wzones + nodes)
+pidx, widx, spidx, seidx = pzones, pzones + wzones, pzones + wzones + nodes, pzones+wzones+nodes+nodes
 
 energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
@@ -117,6 +117,9 @@ contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 firstyear = 2020
 finalyear = firstyear+years-1
 
+
+#%% 
+# Find better way to sort these?
 nhvdc = network_mask.sum()
 
 MLoad = MLoad / 1000. #MW to GW
@@ -128,6 +131,28 @@ def countleaps(startyear, finalyear):
             leaps+=1
     return leaps
     
+masked_DCloss = DCloss[network_mask]
+
+pv_zs_in_n = [np.where(PVl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
+wind_zs_in_n = [np.where(Windl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
+
+pos_export_lines = [np.where(network[:,0]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
+neg_export_lines = [np.where(network[:,1]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
+
+npv = len(PVl)
+nwind = len(Windl)
+
+if scenario >= 21:
+    LegPH, LegINTC = -1, -1
+else:
+    LegPH, LegINTC = 0,0 
+
+leapdays = (years+(4-59/365))//4
+
+ndays = 365*years + leapdays
+intervals = int(ndays*24/resolution)
+
+xlen = npv + nwind + nodes*2 + nhvdc
 
 #%%
 class Solution:
@@ -160,23 +185,6 @@ class Solution:
         self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000.  #GW to MW
         self.Charge =    np.array([model.charge[i].value    for i in model.charge   ]).reshape(-1, nodes) * 1000.
         self.Storage =   np.array([model.storage[i].value   for i in model.storage  ]).reshape(-1, nodes) * 1000.  
-
-        # clip Charge and Discharge to remove simultaneous charging and discharging        
-        self.Charge, self.Discharge = np.maximum(0, self.Charge-self.Discharge), np.maximum(0, self.Discharge-self.Charge)
-        for t in range(1, intervals):
-            # recalculate storage level based on clipped charging/discharging
-            self.Storage[t] = np.maximum(
-                0, # storage should not be negative
-                np.minimum(
-                    self.cphe*1000., # storage should not exceed capacity
-                    self.Storage[t-1] - self.Discharge[t-1] * self.resolution + self.Charge[t-1] * self.resolution * self.efficiency
-                    )
-                )
-            # recalculate charge/discharge to match storage level changes (not exceeding (0, cphe))
-            self.Charge[t-1]    = np.minimum(self.Charge[t-1]   , np.maximum(0, (self.Storage[t] - self.Storage[t-1])/self.resolution/self.efficiency))
-            self.Discharge[t-1] = np.minimum(self.Discharge[t-1], np.maximum(0, (self.Storage[t-1] - self.Storage[t])/self.resolution))
-        #Storage exceeds bounds where charge too big - also check optimiser logic
-        
         
         self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro    ]).reshape(-1, nodes) * 1000. 
         self.Bio =       np.array([model.bio[i].value       for i in model.bio      ]).reshape(-1, nodes) * 1000.
@@ -202,4 +210,38 @@ class Solution:
         self.Spillage = -np.minimum(0, self.Load + self.Charge - self.Discharge - self.Hydro
                          - self.Bio - self.PV - self.Wind + self.Transmission)
         
-        self.OBJ = pyo.value(model.OBJ)
+
+        self.GPV, self.GWind, self.GHydro, self.GBio = [x * pow(10, -6) * self.resolution / self.years for x in 
+                                                        (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum())] #TWh p.a.
+        self.CFPV, self.CFWind = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76)
+
+        CostPV = factor[0] * self.cpv.sum()  # A$b p.a.
+        CostWind = factor[1] * self.cwind.sum()  # A$b p.a.
+        CostHydro = factor[14] * self.GHydro  # A$b p.a.
+        CostBio = factor[14] * self.GBio  # A$b p.a.
+        CostPH = factor[2] * self.cphp.sum() + factor[3] * self.cphe.sum()  # A$b p.a.
+        if self.scenario >= 21:
+            CostPH -= factor[15]
+
+        CostDC = (factor[5:13][self.network_mask] * self.chvdc).sum()  # A$b p.a.
+        if self.scenario >= 21:
+            CostDC -= factor[16]
+
+        CostAC = factor[12] * self.cpv.sum() + factor[13] * self.cwind.sum()  # A$b p.a.
+
+        self.Energy = self.Load.sum() * pow(10, -9) * self.resolution / self.years  # PWh p.a.
+
+        self.LCOE = (CostPV + CostWind + CostHydro + CostBio +
+                CostPH + CostDC + CostAC) / self.Energy
+        self.LCOG = (CostPV + CostWind + CostHydro + CostBio) * \
+                pow(10, 3) / (self.GPV + self.GWind + self.GHydro + self.GBio)
+        self.LCOGP = CostPV * pow(10, 3) / self.GPV if self.GPV != 0 else 0
+        self.LCOGW = CostWind * pow(10, 3) / self.GWind if self.GWind != 0 else 0
+        self.LCOGH = CostHydro * pow(10, 3) / self.GHydro if self.GHydro != 0 else 0
+        self.LCOGB = CostBio * pow(10, 3) / self.GBio if self.GBio != 0 else 0
+
+        self.LCOB = self.LCOE - self.LCOG
+        self.LCOBS = CostPH / self.Energy
+        self.LCOBT = (CostDC + CostAC) / self.Energy
+        self.LCOBL = self.LCOB - self.LCOBS - self.LCOBT
+

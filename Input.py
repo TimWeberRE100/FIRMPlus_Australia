@@ -35,9 +35,8 @@ assets = np.genfromtxt('Data/hydrobio.csv', dtype=None, delimiter=',', encoding=
 CHydro, CBio = [assets[:, x] * pow(10, -3) for x in range(assets.shape[1])] 
 
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
-DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400, 
-                   700, 
-                   ]) * 0.03 * pow(10, -3)
+DClengths = np.array([1500, 1000, 1000, 800, 1200, 2400, 400, 700]) 
+DCloss = DClengths * 0.03 * pow(10, -3)
 
 efficiency = 0.8 # round trip efficiency of storage
 factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
@@ -153,6 +152,7 @@ ndays = 365*years + leapdays
 intervals = int(ndays*24/resolution)
 
 xlen = npv + nwind + nodes*2 + nhvdc
+
 
 #%%
 class Solution:

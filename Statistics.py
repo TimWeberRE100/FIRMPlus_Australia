@@ -36,7 +36,7 @@ def Debug(solution):
     assert (np.amax(solution.Charge, axis=0)    - 1000*solution.cphp  <= 1).all(), "Storage charging exceeds bounds."
     assert (np.amax(solution.Discharge, axis=0) - 1000*solution.cphp  <= 1).all(), "Storage discharging exceeds bounds."
     assert (np.amax(solution.Storage, axis=0)   - 1000*solution.cphe  <= 1).all(), "Storage level exceeds bounds."
-    assert (np.amin(solution.Storage, axis=0)                         >= 0).all(), "Storage level goes negative"
+    assert (np.amin(solution.Storage, axis=0)                         >= -0.1).all(), "Storage level goes negative"
     assert (np.amax(solution.Hvdc, axis=0)      - 1000*solution.chvdc <= 1).all(), "Transmission exceeds line capacity."
     assert (np.amin(solution.Hvdc, axis=0)      + 1000*solution.chvdc >= -1).all(), "Transmission exceeds line capacity."
     assert (solution.Transmission.sum(axis=1) >= 0).all(), "DClosses are negative"

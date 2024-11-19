@@ -10,6 +10,7 @@ import pyomo.environ as pyo
 from pyomo.opt import SolverFactory
 
 from Input import * 
+from Costs import *
 
 
 
@@ -26,7 +27,7 @@ def instantiate_model():
     model.nodes = pyo.RangeSet(nodes)
     model.t     = pyo.RangeSet(intervals) 
     
-    model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, nhvdc+1), factor[4:12][network_mask])))
+    model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, nhvdc+1), transmission_costs+substation_costs)))
     
     model.cpv = pyo.Var(
         model.pvl,   
@@ -100,17 +101,17 @@ def instantiate_model():
     
     model.constr_power_balance = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance)
     
-    model.CostPV =    pyo.Expression(rule=lambda m: factor[0] *pyo.summation(m.cpv)  )
-    model.CostWind =  pyo.Expression(rule=lambda m: factor[1] *pyo.summation(m.cwind))
-    model.CostPH =    pyo.Expression(rule=lambda m: factor[2] *pyo.summation(m.cphp)  +
-                                                    factor[3] *pyo.summation(m.cphe)  +
-                                                    factor[15]*LegPH)
-    model.CostHydro = pyo.Expression(rule=lambda m: factor[14]*pyo.summation(m.hydro)*0.001*resolution/years)
-    model.CostBio =   pyo.Expression(rule=lambda m: factor[14]*pyo.summation(m.bio)*0.001*resolution/years)
-    model.CostDC =    pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc) + 
-                                                    factor[16]*LegINTC)
-    model.CostAC =    pyo.Expression(rule=lambda m: factor[12]*pyo.summation(m.cpv)   +
-                                                    factor[13]*pyo.summation(m.cwind))
+    model.CostPV =    pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
+    model.CostWind =  pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
+    model.CostPH =    pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * storage_costs[0] +
+                                                    pyo.summation(m.cphe)      * storage_costs[1] + 
+                                                    pyo.summation(m.discharge) * resolution / years * storage_costs[2] + 
+                                                    storage_costs[3])
+    model.CostHydro = pyo.Expression(rule=lambda m: pyo.summation(m.hydro)     * resolution / years * hydro_cost)
+    model.CostBio =   pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * (hydro_cost+0.1))
+    model.CostDC =    pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc))
+    model.CostAC =    pyo.Expression(rule=lambda m: (pyo.summation(m.cpv) + pyo.summation(m.cwind)) * AC_pvwind)
+    
     model.LCOE = pyo.Expression(rule=lambda m: (m.CostPV + m.CostWind + m.CostPH + m.CostHydro + m.CostBio +
             m.CostDC + m.CostAC) / adj_energy)
 
@@ -163,16 +164,16 @@ def cost_optimise(model):
 
 def reconstruct_from_capacities(capacities):
     model = instantiate_model()
-    for i in model.cpv:
-        model.cpv[  i].fix(capacities[      i-1])
+    for v in model.cpv.values():
+        v.fix(capacities[      i-1])
     for i in model.cwind:
-        model.cwind[i].fix(capacities[pidx +i-1])
+        v.fix(capacities[pidx +i-1])
     for i in model.cphp:
-        model.cphp[ i].fix(capacities[widx +i-1])
+        v.fix(capacities[widx +i-1])
     for i in model.cphe:
-        model.cphe[ i].fix(capacities[spidx+i-1])
+        v.fix(capacities[spidx+i-1])
     for i in model.chvdc:
-        model.chvdc[i].fix(capacities[seidx+i-1])
+        v.fix(capacities[seidx+i-1])
 
     model = cost_optimise(model)
     model = optimise_operations(model)

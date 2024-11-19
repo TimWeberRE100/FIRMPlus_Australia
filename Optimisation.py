@@ -27,37 +27,47 @@ def instantiate_model():
     model.nodes = pyo.RangeSet(nodes)
     model.t     = pyo.RangeSet(intervals) 
     
-    model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, nhvdc+1), transmission_costs+substation_costs)))
+    model.hvdcCost = pyo.Param(
+        model.lines, 
+        domain=pyo.Reals, 
+        initialize = lambda m, n: transmission_costs[n-1]+substation_costs
+        )
     
     model.cpv = pyo.Var(
         model.pvl,   
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, npv+1), zip(npv*[0.], npv*[50.]))),
-        initialize=dict(zip(range(1, npv+1), npv*[10.])),
+        bounds=lambda _: (0, 50),
+        initialize=lambda _i: 25,
         )
     model.cwind = pyo.Var(
         model.windl, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nwind+1), zip(nwind*[0.], nwind*[50.]))),
-        initialize=dict(zip(range(1, nwind+1)  , nwind*[10.])),
+        bounds=lambda _: (0, 50),
+        initialize=lambda _: 25,
         )
+    # model.cgas = pyo.Var(
+    #     model.nodes, 
+    #     domain=pyo.NonNegativeReals,
+    #     bounds=lambda _: (0, 20),
+    #     initialize=lambda _: 10,
+    #     )
     model.cphp = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nodes+1), zip(contingency, nodes*[50.]))),
-        initialize=dict(zip(range(1, nodes+1), nodes*[10.])),
+        bounds=lambda m, n: (contingency[n-1], 50),
+        initialize=lambda m, n: (contingency[n-1]+50)/2,
         )
     model.cphe = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nodes+1), zip(nodes*[0.], nodes*[500.]))),
-        initialize=dict(zip(range(1, nodes+1), nodes*[100.])),
+        bounds=lambda _: (0, 500),
+        initialize=lambda _: 100,
         )
     model.chvdc = pyo.Var(
         model.lines, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nhvdc+1), zip(nhvdc*[0.], nhvdc*[100.]))),
-        initialize=dict(zip(range(1, nhvdc+1), nhvdc*[50.])),
+        bounds=lambda _: (0,100),
+        initialize=lambda _: 10,
         )
     
     model.charge =  pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
@@ -65,6 +75,7 @@ def instantiate_model():
     model.storage = pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
     model.hydro =   pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
     model.bio =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
+    # model.gas =     pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
     
     model.hvdc_pos = pyo.Var(model.t, model.lines, domain=pyo.NonNegativeReals)
     model.hvdc_neg = pyo.Var(model.t, model.lines, domain=pyo.NonNegativeReals)
@@ -75,6 +86,7 @@ def instantiate_model():
     
     model.constr_hydro_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.hydro[t, n] <= CHydro[n-1])
     model.constr_bio_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.bio[t, n] <= CBio[n-1])
+    # model.constr_gas_power_upper = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.gas[t, n] <= m.cgas[n])
     
     model.constr_hvdc_power_import = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc_pos[t, l] <= m.chvdc[l])
     model.constr_hvdc_power_export = pyo.Constraint(model.t, model.lines, rule=lambda m, t, l: m.hvdc_neg[t, l] <= m.chvdc[l])
@@ -92,39 +104,62 @@ def instantiate_model():
     
         
     def constr_power_balance(m, t, n):
-        return (MLoad[t-1, n-1] + m.charge[t,n] 
-                - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
-                - m.hydro[t,n] - m.bio[t,n] - m.discharge[t,n] 
+        return (MLoad[t-1, n-1] 
+                + m.charge[t,n] 
+                - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) 
+                - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
+                - m.hydro[t,n] 
+                - m.bio[t,n] 
+                # - m.gas[t,n]
+                - m.discharge[t,n] 
                 + sum((m.hvdc_pos[t, l] - m.hvdc_neg[t, l]*(1-masked_DCloss[l-1]) for l in pos_export_lines[n-1]))
                 + sum((m.hvdc_neg[t, l] - m.hvdc_pos[t, l]*(1-masked_DCloss[l-1]) for l in neg_export_lines[n-1]))
                 ) <= 0.0
     
     model.constr_power_balance = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance)
     
-    model.CostPV =    pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
-    model.CostWind =  pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
-    model.CostPH =    pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * storage_costs[0] +
+    model.CostPV    = pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
+    model.CostWind  = pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
+    # model.CostGas   = pyo.Expression(rule=lambda m: pyo.summation(m.cgas) * gas_costs[0] + 
+    #                                                 pyo.summation(m.gas) * resolution / years * gas_costs[1])
+    model.CostPH    = pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * storage_costs[0] +
                                                     pyo.summation(m.cphe)      * storage_costs[1] + 
                                                     pyo.summation(m.discharge) * resolution / years * storage_costs[2] + 
                                                     storage_costs[3])
     model.CostHydro = pyo.Expression(rule=lambda m: pyo.summation(m.hydro)     * resolution / years * hydro_cost)
-    model.CostBio =   pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * (hydro_cost+0.1))
-    model.CostDC =    pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc))
-    model.CostAC =    pyo.Expression(rule=lambda m: (pyo.summation(m.cpv) + pyo.summation(m.cwind)) * AC_pvwind)
+    model.CostBio   = pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * (hydro_cost+0.1))
+    model.CostDC    = pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc))
+    model.CostAC    = pyo.Expression(rule=lambda m: (
+        pyo.summation(m.cpv) + 
+        pyo.summation(m.cwind) +
+        # pyo.summation(m.cgas) +
+        0) * AC_gen
+        )
     
-    model.LCOE = pyo.Expression(rule=lambda m: (m.CostPV + m.CostWind + m.CostPH + m.CostHydro + m.CostBio +
-            m.CostDC + m.CostAC) / adj_energy)
+    model.LCOE = pyo.Expression(rule=lambda m: (
+        m.CostPV + 
+        m.CostWind + 
+        # m.CostGas +
+        m.CostPH + 
+        m.CostHydro + 
+        m.CostBio +
+        m.CostDC + 
+        m.CostAC
+        ) / adj_energy
+        )
 
     return model 
 
 def fix_investment(model):
     model.cpv.fix()
     model.cwind.fix()
+    model.cgas.fix()
     model.cphp.fix()
     model.cphe.fix()
     model.chvdc.fix()
     model.hydro.fix()
     model.bio.fix()
+    model.gas.fix()
     return model
 
 def unfix(model):
@@ -191,6 +226,7 @@ if __name__ == '__main__':
     
     print('pv:', S.cpv)
     print('wind:', S.cwind)
+    print('gas:', S.cwind)
     print('php:', S.cphp)
     print('phe:', S.cphe)
     print('chvdc:', S.chvdc)

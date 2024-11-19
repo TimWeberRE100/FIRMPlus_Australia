@@ -7,6 +7,8 @@ from Input import DClengths, network_mask
 # =============================================================================
 
 # AUD to USD conversion 1 : 0.7 where necessary
+curr_conv = 0.7
+
 pv_capex = 671 # USD/kW, Mean global cost, IRENA Renewable Power Generation Costs in 2023: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/Aug/IRENA_Renewable_power_generation_costs_in_2022.pdf
 pv_fom = 3.6 # USD/kW p.a. Median Asia cost, IRENA Renewable Power Generation Costs in 2022: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/Aug/IRENA_Renewable_power_generation_costs_in_2022.pdf
 pv_vom = 0 # USD/MWh p.a.
@@ -26,7 +28,7 @@ wind_offshore_lifetime = 25
 # Based on "Circuit" line, transformer and substation cost and lifetime in Appendix 4
 # 500kV line assumed to have 1500 MW capacity, as per Table 9: https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
 transmission_hvac_capex = 463000/1500 # (USD/km) / MW
-transmission_hvac_fom = 3.2 * 0.7 # USD/MW-km p.a.
+transmission_hvac_fom = 3.2 * curr_conv # USD/MW-km p.a.
 transmission_hvac_vom = 0 # USD/MWh p.a.
 transmission_hvac_lifetime = 60
 transmission_hvac_transformers = 11000 # USD/MW, transformer cost (USD/MW)
@@ -34,15 +36,23 @@ transmission_hvac_transformers = 11000 # USD/MW, transformer cost (USD/MW)
 # HVDC point-to-point costs from https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
 # 500kV line assumed to have 3000 MW capacity, as per Table 9: https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
 transmission_hvdc_capex = 394000/3000 # (USD/km) / MW
-transmission_hvdc_fom = 3.2 * 0.7 # USD/MW-km p.a.
+transmission_hvdc_fom = 3.2 * curr_conv # USD/MW-km p.a.
 transmission_hvdc_vom = 0 # USD/MWh p.a.
 transmission_hvdc_lifetime = 60
 
 # HVDC converter station
-converter_capex = 160 * 0.7 # USD/kW each
-converter_fom = 1.6 * 0.7 # USD/kW each p.a.
+converter_capex = 160 * curr_conv # USD/kW each
+converter_fom = 1.6 * curr_conv # USD/kW each p.a.
 converter_vom = 0 # USD/MWh p.a.
 converter_lifetime = 60
+
+# Gas 
+# costs from GenCost 2024 - open cycle (large) 2050 costs
+gas_capex = 826 * curr_conv # USD/kW
+gas_fom = 10.2 * curr_conv # USD/kW p.a.
+gas_vom = 7.3 * curr_conv # $/MWh 
+gas_fuel = 13.5 / 0.33 * 0.278 * curr_conv # S/MWh 
+gas_lifetime = 25
 
 # Assume class A site, scaled to US 2024 dollars
 storage_capexP = 530/0.83 # USD/kW # 
@@ -124,8 +134,12 @@ def annualization_battery_constants(capex_p, capex_e, fom, vom, life, dr):
 
 pv_costs = annualization_constants(pv_capex, pv_fom, pv_vom, pv_lifetime, DR)[0] #vom is 0
 wind_costs = annualization_constants(wind_capex, wind_fom, wind_vom, wind_lifetime, DR)[0] #vom iis 0
-AC_pvwind = annualization_transmission_constants(transmission_hvac_capex, transmission_hvac_transformers, 
+gas_costs = annualization_constants(gas_capex, gas_fom, gas_vom + gas_fuel, gas_lifetime, DR)
+
+AC_gen = annualization_transmission_constants(transmission_hvac_capex, transmission_hvac_transformers, 
                                                  transmission_hvac_fom, transmission_hvac_vom, transmission_hvac_lifetime, DR, 20)[0] #vom is 0
+
+
 storage_costs = annualization_phes_constants(storage_capexP, stoarge_capexE, storage_fom, storage_vom, storage_replace, replace, storage_lifetime, DR)
 
 transmission_costs = np.array([annualization_transmission_constants(transmission_hvdc_capex, 0, transmission_hvdc_fom, transmission_hvdc_vom, transmission_hvdc_lifetime, DR, d)[0]

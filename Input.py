@@ -6,6 +6,7 @@
 import numpy as np
 import pyomo.environ as pyo
 from argparse import ArgumentParser
+np.set_printoptions(suppress=True)
 
 parser = ArgumentParser()
 parser.add_argument('-s', default=21, type=int, required=False, help='scenario')
@@ -153,6 +154,7 @@ intervals = int(ndays*24/resolution)
 
 xlen = npv + nwind + nodes*2 + nhvdc
 
+from Costs import * 
 
 #%%
 class Solution:
@@ -173,23 +175,28 @@ class Solution:
         self.StartCharge, self.efficiency = StartCharge, efficiency
         
         # capacities in GW and GWh
-        self.cpv =   np.array([model.cpv[i].value   for i in model.cpv])
-        self.cwind = np.array([model.cwind[i].value for i in model.cwind])
-        self.cphp =  np.array([model.cphp[i].value  for i in model.cphp])
-        self.cphe =  np.array([model.cphe[i].value  for i in model.cphe]) 
-        self.chvdc = np.array([model.chvdc[i].value for i in model.chvdc])
+        self.cpv    = np.array([model.cpv[i].value   for i in model.cpv])
+        self.cwind  = np.array([model.cwind[i].value for i in model.cwind])
+        self.cgas   = np.array([model.cgas[i].value  for i in model.cgas])
+        self.cphp   = np.array([model.cphp[i].value  for i in model.cphp])
+        self.cphe   = np.array([model.cphe[i].value  for i in model.cphe]) 
+        self.chvdc  = np.array([model.chvdc[i].value for i in model.chvdc])
         self.chydro = CHydro
-        self.cbio = CBio
+        self.cbio   = CBio
+
+        self.cpv_n   = np.array([self.cpv[  np.where(self.PVl  ==node)[0]].sum() for node in self.Nodel])
+        self.cwind_n = np.array([self.cwind[np.where(self.Windl==node)[0]].sum() for node in self.Nodel])
 
         # operations in MW and MWh
         self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000.  #GW to MW
-        self.Charge =    np.array([model.charge[i].value    for i in model.charge   ]).reshape(-1, nodes) * 1000.
-        self.Storage =   np.array([model.storage[i].value   for i in model.storage  ]).reshape(-1, nodes) * 1000.  
+        self.Charge    = np.array([model.charge[i].value    for i in model.charge   ]).reshape(-1, nodes) * 1000.
+        self.Storage   = np.array([model.storage[i].value   for i in model.storage  ]).reshape(-1, nodes) * 1000.  
         
-        self.Hydro =     np.array([model.hydro[i].value     for i in model.hydro    ]).reshape(-1, nodes) * 1000. 
-        self.Bio =       np.array([model.bio[i].value       for i in model.bio      ]).reshape(-1, nodes) * 1000.
-        Hvdc_pos =       np.array([model.hvdc_pos[i].value  for i in model.hvdc_pos ]).reshape(-1, nhvdc) * 1000. 
-        Hvdc_neg =       np.array([model.hvdc_neg[i].value  for i in model.hvdc_neg ]).reshape(-1, nhvdc) * 1000. 
+        self.Hydro     = np.array([model.hydro[i].value     for i in model.hydro    ]).reshape(-1, nodes) * 1000. 
+        self.Bio       = np.array([model.bio[i].value       for i in model.bio      ]).reshape(-1, nodes) * 1000.
+        self.Gas       = np.array([model.gas[i].value       for i in model.gas      ]).reshape(-1, nodes) * 1000.
+        Hvdc_pos       = np.array([model.hvdc_pos[i].value  for i in model.hvdc_pos ]).reshape(-1, nhvdc) * 1000. 
+        Hvdc_neg       = np.array([model.hvdc_neg[i].value  for i in model.hvdc_neg ]).reshape(-1, nhvdc) * 1000. 
         self.Hvdc = Hvdc_pos - Hvdc_neg
 
         self.Transmission = np.empty_like(self.Charge)
@@ -210,35 +217,39 @@ class Solution:
         self.Spillage = -np.minimum(0, self.Load + self.Charge - self.Discharge - self.Hydro
                          - self.Bio - self.PV - self.Wind + self.Transmission)
         
+        # self.GPV, self.GWind, self.GHydro, self.GBio = [x * pow(10, -6) * self.resolution / self.years for x in 
+        #                                                 (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum())] #TWh p.a.
+        # self.CFPV, self.CFWind = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76)
 
-        self.GPV, self.GWind, self.GHydro, self.GBio = [x * pow(10, -6) * self.resolution / self.years for x in 
-                                                        (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum())] #TWh p.a.
-        self.CFPV, self.CFWind = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76)
+        self.GPV, self.GWind, self.GHydro, self.GBio, self.GGas = [x * pow(10, -6) * self.resolution / self.years for x in 
+                                                        (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum(), self.Gas.sum())] #TWh p.a.
+        self.CFPV, self.CFWind, self.CFGas = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76, self.GGas/self.cgas.sum() / 8.76)
 
-        CostPV = factor[0] * self.cpv.sum()  # A$b p.a.
-        CostWind = factor[1] * self.cwind.sum()  # A$b p.a.
-        CostHydro = factor[14] * self.GHydro  # A$b p.a.
-        CostBio = factor[14] * self.GBio  # A$b p.a.
-        CostPH = factor[2] * self.cphp.sum() + factor[3] * self.cphe.sum()  # A$b p.a.
-        if self.scenario >= 21:
-            CostPH -= factor[15]
+        CostPV = pv_costs * self.cpv.sum()  
+        CostWind = wind_costs * self.cwind.sum()  
+        CostGas = gas_costs[0] * self.cgas.sum() + gas_costs[1] * self.GGas * pow(10, 6) 
+        CostHydro = hydro_cost * self.GHydro 
+        CostBio = (hydro_cost + 0.1) * self.GBio 
+        CostPH = (storage_costs[0] * self.cphp.sum() +
+                  storage_costs[1] * self.cphe.sum() +
+                  storage_costs[2] * self.Discharge.sum()*resolution/years + 
+                  storage_costs[3])
+        CostDC = (self.chvdc*(transmission_costs+substation_costs)).sum()
+        CostAC = (self.cpv.sum() + self.cwind.sum()
+         + self.cgas.sum()
+         )*ACgen_costs
 
-        CostDC = (factor[5:13][self.network_mask] * self.chvdc).sum()  # A$b p.a.
-        if self.scenario >= 21:
-            CostDC -= factor[16]
+        self.Energy = self.Load.sum() * self.resolution / self.years  # MWh p.a.
 
-        CostAC = factor[12] * self.cpv.sum() + factor[13] * self.cwind.sum()  # A$b p.a.
-
-        self.Energy = self.Load.sum() * pow(10, -9) * self.resolution / self.years  # PWh p.a.
-
-        self.LCOE = (CostPV + CostWind + CostHydro + CostBio +
+        self.LCOE = (CostPV + CostWind + CostGas + CostHydro + CostBio +
                 CostPH + CostDC + CostAC) / self.Energy
-        self.LCOG = (CostPV + CostWind + CostHydro + CostBio) * \
-                pow(10, 3) / (self.GPV + self.GWind + self.GHydro + self.GBio)
-        self.LCOGP = CostPV * pow(10, 3) / self.GPV if self.GPV != 0 else 0
-        self.LCOGW = CostWind * pow(10, 3) / self.GWind if self.GWind != 0 else 0
-        self.LCOGH = CostHydro * pow(10, 3) / self.GHydro if self.GHydro != 0 else 0
-        self.LCOGB = CostBio * pow(10, 3) / self.GBio if self.GBio != 0 else 0
+        self.LCOG = ((CostPV + CostWind + CostHydro + CostBio) 
+                 / ((self.GPV + self.GWind + self.GHydro + self.GBio) * pow(10, 6)))
+        self.LCOGP = CostPV / (self.GPV * pow(10, 6)) if self.GPV != 0 else 0
+        self.LCOGW = CostWind / (self.GWind * pow(10, 6))if self.GWind != 0 else 0
+        self.LCOGH = CostHydro / (self.GHydro * pow(10, 6)) if self.GHydro != 0 else 0
+        self.LCOGB = CostBio / (self.GBio * pow(10, 6)) if self.GBio != 0 else 0
+        self.LCOGG = CostGas / (self.GGas * pow(10, 6)) if self.GGas != 0 else 0
 
         self.LCOB = self.LCOE - self.LCOG
         self.LCOBS = CostPH / self.Energy

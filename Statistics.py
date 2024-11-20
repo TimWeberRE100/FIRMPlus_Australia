@@ -20,10 +20,20 @@ def Debug(solution):
 
     for t in range(solution.intervals):
         # supply-demand
-        assert (np.abs(solution.Load[t] + solution.Spillage[t] + solution.Charge[t]
-                       - solution.Discharge[t] - solution.Hydro[t] - solution.Bio[t]
-                       + solution.Transmission[t] - solution.PV[t] - solution.Wind[t]) <= 1#MW
-                ).all(), f"Supply demand unbalanced. t: {t}"
+        sup_dem = (
+            solution.Load[t] 
+            + solution.Spillage[t] 
+            + solution.Charge[t]
+            - solution.Discharge[t] 
+            - solution.Hydro[t] 
+            - solution.Bio[t]
+            + solution.Transmission[t] 
+            - solution.PV[t] 
+            - solution.Wind[t]
+            - solution.Gas[t]
+            )
+        
+        assert (np.abs(sup_dem) <= 1).all(), f"Supply demand unbalanced. t: {t}. supply-demand: {-sup_dem}"
 
         # Discharge, Charge and Storage
         if t == 0:
@@ -100,6 +110,7 @@ def GGTA(solution):
     print('\u2022 LCOB:', solution.LCOB)
     print('\u2022 LCOG-PV:', solution.LCOGP, f'({solution.CFPV})' )
     print('\u2022 LCOG-Wind:', solution.LCOGW, f'({solution.CFWind})')
+    print('\u2022 LCOG-Gas:', solution.LCOGG, f'({solution.CFGas})')
     print('\u2022 LCOG-Hydro:', solution.LCOGH)
     print('\u2022 LCOG-Bio:', solution.LCOGB)
     print('\u2022 LCOB-Storage:', solution.LCOBS)

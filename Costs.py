@@ -1,57 +1,58 @@
 import numpy as np
 from Input import DClengths, network_mask
 
-# =============================================================================
-# Would be good to revisit these before using any results
-#   Taken from FIRM Mekong
-# =============================================================================
-
 # AUD to USD conversion 1 : 0.7 where necessary
-pv_capex = 671 # USD/kW, Mean global cost, IRENA Renewable Power Generation Costs in 2023: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/Aug/IRENA_Renewable_power_generation_costs_in_2022.pdf
-pv_fom = 3.6 # USD/kW p.a. Median Asia cost, IRENA Renewable Power Generation Costs in 2022: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/Aug/IRENA_Renewable_power_generation_costs_in_2022.pdf
-pv_vom = 0 # USD/MWh p.a.
+curr_conv = 0.7
+
+## Costs, except for transmission and pmped hydro come from Apx Table B.9 iof Gencost 2023-24 (year=2050, assumption=low)
+
+##Transmission costs should be updated for Australia
+
+pv_capex = 583 # AUD/kW GenCost 2023-4
+pv_fom = 17 # AUD/kW
+pv_vom = 0 # AUD/MWh
 pv_lifetime = 30
 
-wind_capex = 986 # USD/kW, Mean global onshore wind cost, IRENA Renewable Power Generation Costs in 2023: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/Aug/IRENA_Renewable_power_generation_costs_in_2022.pdf
-wind_fom = 29.5 # USD/kW p.a., No great data recent for ASEAN, so just used same assumption as 7th ASEAN Energy Outlook:https://asean.org/wp-content/uploads/2023/04/The-7th-ASEAN-Energy-Outlook-2022.pdf
-wind_vom = 0 # USD/MWh p.a.
+wind_capex = 1763 # AUD/kW 
+wind_fom = 25 # AUD/kW 
+wind_vom = 0 # AUD/MWh
 wind_lifetime = 25
 
-wind_offshore_capex = 2370 # USD/kW, Mean global offshore wind cost, IRENA Renewable Power Generation Costs in 2022: https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/Aug/IRENA_Renewable_power_generation_costs_in_2022.pdf
-wind_offshore_fom = 67 # USD/kW p.a., No great data recent for ASEAN, so just used same assumption as 7th ASEAN Energy Outlook:https://asean.org/wp-content/uploads/2023/04/The-7th-ASEAN-Energy-Outlook-2022.pdf
-wind_offshore_vom = 0 # USD/MWh p.a.
+wind_offshore_capex = 2691 # AUD/kW 
+wind_offshore_fom = 149.9 # AUD/kW 
+wind_offshore_vom = 0 # AUD/MWh
 wind_offshore_lifetime = 25
 
 # HVAC costs from https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
 # Based on "Circuit" line, transformer and substation cost and lifetime in Appendix 4
 # 500kV line assumed to have 1500 MW capacity, as per Table 9: https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
-transmission_hvac_capex = 463000/1500 # (USD/km) / MW
-transmission_hvac_fom = 3.2 * 0.7 # USD/MW-km p.a.
-transmission_hvac_vom = 0 # USD/MWh p.a.
+transmission_hvac_capex = 463000/1500 / curr_conv # (AUD/km) / MW
+transmission_hvac_fom = 3.2 / curr_conv # AUD/MW-km p.a.
+transmission_hvac_vom = 0 # AUD/MWh p.a.
 transmission_hvac_lifetime = 60
-transmission_hvac_transformers = 11000 # USD/MW, transformer cost (USD/MW)
+transmission_hvac_transformers = 11000 / curr_conv # AUD/MW, transformer cost (AUD/MW)
 
 # HVDC point-to-point costs from https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
 # 500kV line assumed to have 3000 MW capacity, as per Table 9: https://www.adb.org/sites/default/files/project-documents/47129/47129-001-tacr-en.pdf
-transmission_hvdc_capex = 394000/3000 # (USD/km) / MW
-transmission_hvdc_fom = 3.2 * 0.7 # USD/MW-km p.a.
-transmission_hvdc_vom = 0 # USD/MWh p.a.
+transmission_hvdc_capex = 394000/3000 / curr_conv # (AUD/km) / MW
+transmission_hvdc_fom = 3.2 / curr_conv  # AUD/MW-km p.a.
+transmission_hvdc_vom = 0 # AUD/MWh p.a.
 transmission_hvdc_lifetime = 60
 
 # HVDC converter station
-converter_capex = 160 * 0.7 # USD/kW each
-converter_fom = 1.6 * 0.7 # USD/kW each p.a.
-converter_vom = 0 # USD/MWh p.a.
+converter_capex = 160  # AUD/kW each
+converter_fom = 1.6  # AUD/kW each p.a.
+converter_vom = 0 # AUD/MWh p.a.
 converter_lifetime = 60
 
 # Assume class A site, scaled to US 2024 dollars
-storage_capexP = 530/0.83 # USD/kW # 
-stoarge_capexE = 47/0.83 # USD/kWh
-storage_fom = 8.21 # USD/kW p.a.
-storage_vom = 0.3 # USD/MWh p.a.
-storage_replace = 112000 # USD per replace
+storage_capexP = 530/0.83 / curr_conv # AUD/kW 
+stoarge_capexE = 47/0.83 / curr_conv # AUD/kWh
+storage_fom = 8.21 / curr_conv # AUD/kW p.a.
+storage_vom = 0.3 / curr_conv # AUD/MWh p.a.
+storage_replace = 112000 / curr_conv # AUD per replace
 replace = 50 # every 50 years
-storage_lifetime = 100
+storage_lifetime = 100 #operational life
 
 # battery_capexP = 45 # USD/kW, median Initial Capital Cost AC for 100MW/400MWh battery in Lazard LCOE+: https://www.lazard.com/media/xemfey0k/lazards-lcoeplus-june-2024-_vf.pdf 
 # battery_capexE = 221 + 70 # USD/kWh, median Initial Capital Cost DC + EPC costs for 100MW/400MWh battery in Lazard LCOE+: https://www.lazard.com/media/xemfey0k/lazards-lcoeplus-june-2024-_vf.pdf
@@ -59,9 +60,9 @@ storage_lifetime = 100
 # battery_vom = 0 # AUD/MWh p.a.
 # battery_lifetime = 20
 
-hydro_cost = 50 # USD/MWh
+hydro_cost = 50 # AUD/MWh
 
-DR = 0.05 # Real discount rate 
+DR = 0.0599 # Real discount rate - same as gencost
 
 def annualization(capex, fom, vom, life, dr, p, e):
     """ Calculate annualized costs for capacity p and annual generation e.
@@ -124,7 +125,8 @@ def annualization_battery_constants(capex_p, capex_e, fom, vom, life, dr):
 
 pv_costs = annualization_constants(pv_capex, pv_fom, pv_vom, pv_lifetime, DR)[0] #vom is 0
 wind_costs = annualization_constants(wind_capex, wind_fom, wind_vom, wind_lifetime, DR)[0] #vom iis 0
-AC_pvwind = annualization_transmission_constants(transmission_hvac_capex, transmission_hvac_transformers, 
+
+ACgen_costs = annualization_transmission_constants(transmission_hvac_capex, transmission_hvac_transformers, 
                                                  transmission_hvac_fom, transmission_hvac_vom, transmission_hvac_lifetime, DR, 20)[0] #vom is 0
 storage_costs = annualization_phes_constants(storage_capexP, stoarge_capexE, storage_fom, storage_vom, storage_replace, replace, storage_lifetime, DR)
 

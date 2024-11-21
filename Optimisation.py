@@ -19,7 +19,7 @@ def instantiate_model():
     print("Instantiating optimiser:", dt.now())
     model = pyo.ConcreteModel()
     
-    adj_energy = (MLoad[:intervals, :].sum() * pow(10, -6) * resolution / years)
+    adj_energy = (MLoad[:intervals, :].sum() * pow(10,3) * resolution / years)
     
     model.pvl   = pyo.RangeSet(npv)
     model.windl = pyo.RangeSet(nwind)
@@ -27,37 +27,41 @@ def instantiate_model():
     model.nodes = pyo.RangeSet(nodes)
     model.t     = pyo.RangeSet(intervals) 
     
-    model.hvdcCost = pyo.Param(model.lines, domain=pyo.Reals, initialize = dict(zip(range(1, nhvdc+1), transmission_costs+substation_costs)))
+    model.hvdcCost = pyo.Param(
+        model.lines, 
+        domain=pyo.Reals, 
+        initialize = lambda m, n: transmission_costs[n-1]+substation_costs
+        )
     
     model.cpv = pyo.Var(
         model.pvl,   
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, npv+1), zip(npv*[0.], npv*[50.]))),
-        initialize=dict(zip(range(1, npv+1), npv*[10.])),
+        bounds=lambda _: (0, 20),
+        initialize=lambda _i: 10,
         )
     model.cwind = pyo.Var(
         model.windl, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nwind+1), zip(nwind*[0.], nwind*[50.]))),
-        initialize=dict(zip(range(1, nwind+1)  , nwind*[10.])),
+        bounds=lambda _: (0, 20),
+        initialize=lambda _: 10,
         )
     model.cphp = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nodes+1), zip(contingency, nodes*[50.]))),
-        initialize=dict(zip(range(1, nodes+1), nodes*[10.])),
+        bounds=lambda m, n: (contingency[n-1], 20),
+        initialize=lambda m, n: (contingency[n-1]+10)/2,
         )
     model.cphe = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nodes+1), zip(nodes*[0.], nodes*[500.]))),
-        initialize=dict(zip(range(1, nodes+1), nodes*[100.])),
+        bounds=lambda _: (0, 200),
+        initialize=lambda _: 100,
         )
     model.chvdc = pyo.Var(
         model.lines, 
         domain=pyo.NonNegativeReals, 
-        bounds=dict(zip(range(1, nhvdc+1), zip(nhvdc*[0.], nhvdc*[100.]))),
-        initialize=dict(zip(range(1, nhvdc+1), nhvdc*[50.])),
+        bounds=lambda _: (0,20),
+        initialize=lambda _: 10,
         )
     
     model.charge =  pyo.Var(model.t, model.nodes, domain=pyo.NonNegativeReals)
@@ -90,31 +94,42 @@ def instantiate_model():
     
     model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
     
-        
     def constr_power_balance(m, t, n):
-        return (MLoad[t-1, n-1] + m.charge[t,n] 
-                - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
-                - m.hydro[t,n] - m.bio[t,n] - m.discharge[t,n] 
-                + sum((m.hvdc_pos[t, l] - m.hvdc_neg[t, l]*(1-masked_DCloss[l-1]) for l in pos_export_lines[n-1]))
-                + sum((m.hvdc_neg[t, l] - m.hvdc_pos[t, l]*(1-masked_DCloss[l-1]) for l in neg_export_lines[n-1]))
-                ) <= 0.0
+        return (
+            MLoad[t-1, n-1] 
+            + m.charge[t,n] 
+            - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) 
+            - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
+            - m.hydro[t,n] 
+            - m.bio[t,n] 
+            - m.discharge[t,n] 
+            + sum((m.hvdc_pos[t, l] - m.hvdc_neg[t, l]*(1-masked_DCloss[l-1]) for l in pos_export_lines[n-1]))
+            + sum((m.hvdc_neg[t, l] - m.hvdc_pos[t, l]*(1-masked_DCloss[l-1]) for l in neg_export_lines[n-1]))
+            ) <= 0.0
     
     model.constr_power_balance = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance)
     
-    model.CostPV =    pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
-    model.CostWind =  pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
-    model.CostPH =    pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * storage_costs[0] +
+    model.CostPV    = pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
+    model.CostWind  = pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
+    model.CostPH    = pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * storage_costs[0] +
                                                     pyo.summation(m.cphe)      * storage_costs[1] + 
-                                                    pyo.summation(m.discharge) * resolution / years * storage_costs[2] + 
+                                                    pyo.summation(m.discharge) * resolution / years * 1000 * storage_costs[2] + 
                                                     storage_costs[3])
-    model.CostHydro = pyo.Expression(rule=lambda m: pyo.summation(m.hydro)     * resolution / years * hydro_cost)
-    model.CostBio =   pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * (hydro_cost+0.1))
-    model.CostDC =    pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc))
-    model.CostAC =    pyo.Expression(rule=lambda m: (pyo.summation(m.cpv) + pyo.summation(m.cwind)) * AC_pvwind)
+    model.CostHydro = pyo.Expression(rule=lambda m: pyo.summation(m.hydro)     * resolution / years * 1000 * hydro_cost)
+    model.CostBio   = pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * 1000 * (hydro_cost+0.1))
+    model.CostDC    = pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc))
+    model.CostAC    = pyo.Expression(rule=lambda m: (pyo.summation(m.cpv) + pyo.summation(m.cwind)) * ACgen_costs)
     
-    model.LCOE = pyo.Expression(rule=lambda m: (m.CostPV + m.CostWind + m.CostPH + m.CostHydro + m.CostBio +
-            m.CostDC + m.CostAC) / adj_energy)
-
+    model.LCOE = pyo.Expression(rule=lambda m: (
+        m.CostPV + 
+        m.CostWind + 
+        m.CostPH + 
+        m.CostHydro + 
+        m.CostBio +
+        m.CostDC + 
+        m.CostAC
+        ) / adj_energy
+        )
     return model 
 
 def fix_investment(model):

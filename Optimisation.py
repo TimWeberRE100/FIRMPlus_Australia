@@ -26,7 +26,6 @@ def instantiate_model():
     model.lines = pyo.RangeSet(nhvdc)
     model.nodes = pyo.RangeSet(nodes)
     model.t     = pyo.RangeSet(intervals) 
-    model.tn = pyo.Set(model.nodes, within=model.t, initialize={n:list(model.t) for n in model.nodes})
     
     model.hvdcCost = pyo.Param(
         model.lines, 
@@ -107,7 +106,7 @@ def instantiate_model():
     model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
     
         
-    def constr_power_balance(m, t, n):
+    def expr_energy_balance(m, t, n):
         return (MLoad[t-1, n-1] 
                 + m.charge[t,n] 
                 - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) 
@@ -118,9 +117,10 @@ def instantiate_model():
                 - m.discharge[t,n] 
                 + sum((m.hvdc_pos[t, l] - m.hvdc_neg[t, l]*(1-masked_DCloss[l-1]) for l in pos_export_lines[n-1]))
                 + sum((m.hvdc_neg[t, l] - m.hvdc_pos[t, l]*(1-masked_DCloss[l-1]) for l in neg_export_lines[n-1]))
-                ) <= 0.0
+                )
     
-    model.constr_power_balance = pyo.Constraint(model.t, model.nodes, rule=constr_power_balance)
+    model.energy_balance = pyo.Expression(model.t, model.nodes, rule=expr_energy_balance)
+    model.constr_energy_balance = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.energy_balance[t,n]<=0)
     
     model.CostPV    = pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
     model.CostWind  = pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
@@ -171,10 +171,16 @@ def unfix(model):
     return model
 
 def optimise_operations(model):
+    """ minimise instances of simulataneous dis/charging, im/exporting, etc."""
     model = fix_investment(model)
     
-    model.operations = pyo.Expression(rule=lambda m: (pyo.summation(m.charge) +
-        pyo.summation(m.discharge) + pyo.summation(m.hvdc_pos) + pyo.summation(m.hvdc_neg)))
+    model.operations = pyo.Expression(rule=lambda m: (
+        pyo.summation(m.charge)
+        + pyo.summation(m.discharge) 
+        + pyo.summation(m.hvdc_pos)
+        + pyo.summation(m.hvdc_neg)
+        - pyo.summation(m.energy_balance)
+        ))
     
     model.sensible_operations = pyo.Objective(rule=lambda m: m.operations)
     
@@ -213,6 +219,8 @@ def reconstruct_from_capacities(capacities):
         v.fix(capacities[spidx+i-1])
     for i in model.chvdc:
         v.fix(capacities[seidx+i-1])
+    for i in model.cgas:
+        v.fix(capacities[hvidx+i-1])
 
     model = cost_optimise(model)
     model = optimise_operations(model)

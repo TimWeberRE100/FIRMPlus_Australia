@@ -52,11 +52,11 @@ def Debug(solution):
     assert (solution.Transmission.sum(axis=1) >= 0).all(), "DClosses are negative"
 
     try: assert ((solution.Charge > 0.1) * (solution.Discharge > 0.1)).sum() == 0 
-    except AssertionError: warn("Simultaneous charging and discharging", BehaviourWarning)
+    except AssertionError: warn("Simultaneous charging and discharging. (may artificially reduce LCOS)", BehaviourWarning)
     try: assert ((solution.Spillage > 0.1) * (solution.Discharge > 0.1)).sum() == 0
-    except AssertionError: warn("Simultaneous discharge and spillage", BehaviourWarning)
+    except AssertionError: warn("Simultaneous discharge and spillage (may artificially inflate LCOBS and reduce LCOS)", BehaviourWarning)
     try: assert ((solution.Transmission < 0.1) * (solution.Spillage > 0.1)).sum() == 0
-    except AssertionError: warn("Simultaneous import and spillage", BehaviourWarning)
+    except AssertionError: warn("Simultaneous import and spillage (may artificially inflate LCOBS and reduce LCOBT)", BehaviourWarning)
 
     print('Debugging: everything is ok')
 

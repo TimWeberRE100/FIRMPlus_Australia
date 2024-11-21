@@ -109,7 +109,6 @@ if scenario >= 31:
     
 intervals, nodes = MLoad.shape
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
-pidx, widx, spidx, seidx = pzones, pzones + wzones, pzones + wzones + nodes, pzones+wzones+nodes+nodes
 
 energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
@@ -121,15 +120,10 @@ finalyear = firstyear+years-1
 #%% 
 # Find better way to sort these?
 nhvdc = network_mask.sum()
+pidx, widx, spidx, seidx, hvidx = (
+    pzones, pzones+wzones, pzones+wzones+nodes, pzones+wzones+nodes+nodes, pzones+wzones+nodes+nodes+nhvdc)
 
 MLoad = MLoad / 1000. #MW to GW
-
-def countleaps(startyear, finalyear):
-    leaps=0
-    for y in range(startyear, finalyear+1):
-        if y%4 == 0 and y%1000 != 0: 
-            leaps+=1
-    return leaps
     
 masked_DCloss = DCloss[network_mask]
 
@@ -147,9 +141,7 @@ if scenario >= 21:
 else:
     LegPH, LegINTC = 0,0 
 
-leapdays = (years+(4-59/365))//4
-
-ndays = 365*years + leapdays
+ndays = 365*years
 intervals = int(ndays*24/resolution)
 
 xlen = npv + nwind + nodes*2 + nhvdc
@@ -158,7 +150,7 @@ from Costs import *
 
 #%%
 class Solution:
-    def __init__(self, model, years=years, leapdays=True):
+    def __init__(self, model, years=years):
         self.scenario, self.nodes = scenario, nodes
         self.Nodel, self.PVl, self.Windl = Nodel, PVl, Windl
         
@@ -169,8 +161,7 @@ class Solution:
         self.firstyear, self.years = firstyear, years
         self.finalyear = self.firstyear+self.years-1
         self.resolution = resolution
-        leaps = countleaps(self.firstyear, self.finalyear) if leapdays else 0
-        self.intervals = int((years*365 + leaps)*24/resolution)
+        self.intervals = int(years*365*24/resolution)
         
         self.StartCharge, self.efficiency = StartCharge, efficiency
         
@@ -214,8 +205,17 @@ class Solution:
         self.Wind = np.stack([self.Wind[:, np.where(self.Windl==node)[0]].sum(axis=1) for node in self.Nodel]).T
         self.Load = 1000. * MLoad[:self.intervals, :]
         
-        self.Spillage = -np.minimum(0, self.Load + self.Charge - self.Discharge - self.Hydro
-                         - self.Bio - self.PV - self.Wind + self.Transmission)
+        self.Spillage = -np.minimum(0,
+            self.Load 
+            + self.Charge 
+            - self.Discharge 
+            - self.Hydro
+            - self.Bio 
+            - self.Gas
+            - self.PV 
+            - self.Wind 
+            + self.Transmission
+            )
         
         # self.GPV, self.GWind, self.GHydro, self.GBio = [x * pow(10, -6) * self.resolution / self.years for x in 
         #                                                 (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum())] #TWh p.a.

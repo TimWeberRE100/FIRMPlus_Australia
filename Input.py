@@ -221,8 +221,8 @@ class Solution:
         #                                                 (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum())] #TWh p.a.
         # self.CFPV, self.CFWind = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76)
 
-        self.GPV, self.GWind, self.GHydro, self.GBio, self.GGas = [x * pow(10, -6) * self.resolution / self.years for x in 
-                                                        (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum(), self.Gas.sum())] #TWh p.a.
+        self.GPV, self.GWind, self.GHydro, self.GBio, self.GGas, self.GDischarge = [x * pow(10, -6) * self.resolution / self.years for x in 
+                                                        (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum(), self.Gas.sum(), self.Discharge.sum())] #TWh p.a.
         self.CFPV, self.CFWind, self.CFGas = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76, self.GGas/self.cgas.sum() / 8.76)
 
         CostPV = pv_costs * self.cpv.sum()  
@@ -232,7 +232,7 @@ class Solution:
         CostBio = (hydro_cost + 0.1) * self.GBio 
         CostPH = (storage_costs[0] * self.cphp.sum() +
                   storage_costs[1] * self.cphe.sum() +
-                  storage_costs[2] * self.Discharge.sum()*resolution/years + 
+                  storage_costs[2] * self.GDischarge + 
                   storage_costs[3])
         CostDC = (self.chvdc*(transmission_costs+substation_costs)).sum()
         CostAC = (self.cpv.sum() + self.cwind.sum()

@@ -67,8 +67,8 @@ def LPGM(solution):
     """Load profiles and generation mix data"""
 
     C = np.vstack((solution.Load.sum(axis=1), solution.PV.sum(axis=1), solution.Wind.sum(axis=1),
-                   solution.Hydro.sum(axis=1), solution.Bio.sum(axis=1), solution.Discharge.sum(axis=1),
-                   -solution.Charge.sum(axis=1), -solution.Spillage.sum(axis=1),
+                   solution.Gas.sum(axis=1), solution.Hydro.sum(axis=1), solution.Bio.sum(axis=1), 
+                   solution.Discharge.sum(axis=1), -solution.Charge.sum(axis=1), -solution.Spillage.sum(axis=1),
                   solution.Storage.sum(axis=1), solution.Hvdc.T)).T
     C = np.around(C)
 
@@ -76,7 +76,7 @@ def LPGM(solution):
                          solution.resolution)).strftime('%a %d-%b %Y %H:%M') for x in range(solution.intervals)])
     C = np.insert(C.astype('str'), 0, datentime, axis=1)
 
-    header = ','.join(['Date & time', 'Demand', 'Solar photovoltaics', 'Wind', 'Hydropower', 'Biomass',
+    header = ','.join(['Date & time', 'Demand', 'Solar photovoltaics', 'Wind', 'Gas', 'Hydropower', 'Biomass',
                       'PHES-Discharge', 'PHES-Charge', 'Energy spillage', 'PHES-Storage'] +
                       [f'{solution.Nodel[n[0]]}-{solution.Nodel[n[1]]}' for n in solution.network]
                       )
@@ -84,12 +84,12 @@ def LPGM(solution):
     np.savetxt(f'Results/S{solution.scenario}.csv', C,fmt='%s', delimiter=',', header=header, comments='')
 
     if solution.scenario >= 21:
-        header = ','.join(['Date & time', 'Demand', 'Solar photovoltaics', 'Wind', 'Hydropower', 'Biomass',
+        header = ','.join(['Date & time', 'Demand', 'Solar photovoltaics', 'Wind', 'Gas', 'Hydropower', 'Biomass',
                           'PHES-Discharge', 'PHES-Charge', 'Transmission', 'Energy spillage', 'PHES-Storage'])
 
         for j in range(solution.nodes):
-            C = np.vstack([solution.Load[:, j], solution.PV[:, j], solution.Wind[:, j], solution.Hydro[:, j], 
-                           solution.Bio[:, j], solution.Discharge[:, j], -solution.Charge[:, j], 
+            C = np.vstack([solution.Load[:, j], solution.PV[:, j], solution.Wind[:, j], solution.Gas[:, j], 
+                           solution.Hydro[:, j], solution.Bio[:, j], solution.Discharge[:, j], -solution.Charge[:, j], 
                            solution.Transmission[:, j], -solution.Spillage[:, j], solution.Storage[:, j]]).T
             C = np.around(C)
 
@@ -118,14 +118,14 @@ def GGTA(solution):
     print('\u2022 LCOB-Spillage & loss:', solution.LCOBL)
 
     D = np.atleast_2d(np.array(
-        [solution.Energy, solution.cpv.sum(), solution.GPV, solution.cwind.sum(), solution.GWind, 
-         solution.chydro.sum() + solution.cbio.sum(), solution.GHydro + solution.GBio, solution.cphp.sum(), solution.cphe.sum()]
-              + list(solution.chvdc)
-              + [solution.LCOE, solution.LCOG,solution.LCOBS, solution.LCOBT, solution.LCOBL]))
+        [solution.Energy, solution.cpv.sum(), solution.GPV, solution.cwind.sum(), solution.GWind, solution.cgas.sum(), solution.GGas,
+         solution.chydro.sum() + solution.cbio.sum(), solution.GHydro + solution.GBio, solution.cphp.sum(), solution.cphe.sum(), solution.GDischarge]
+        + list(solution.chvdc)
+        + [solution.LCOE, solution.LCOG,solution.LCOBS, solution.LCOBT, solution.LCOBL]))
 
-    header = ','.join(['Energy (PWh p.a.)', 'PV (GW)', 'PV (GWh p.a.)', 'Wind (GW)', 'Wind (GWh p.a.)',
-                     'Hydro & Bio (GW)', 'Hydro & Bio (GWh p.a.)', 'Pumped Hydro capacity (GW)',
-                     'Pumped Hydro capacity (GWh)'] +
+    header = ','.join(['Energy (PWh p.a.)', 'PV (GW)', 'PV (TWh p.a.)', 'Wind (GW)', 'Wind (TWh p.a.)',
+                     'Gas (GW)', 'Gas (TWh p.a.)', 'Hydro & Bio (GW)', 'Hydro & Bio (TWh p.a.)', 
+                     'PHES Power (GW)', 'PHES Energy (GWh)', 'PHES Discharge (TWh p.a.)'] +
                     [f'{solution.Nodel[n[0]]}-{solution.Nodel[n[1]]} (GW)' for n in solution.network] +
                     ['LCOE', 'LCOG', 'LCOB (storage)', 'LCOB (transmission)', 'LCOB (curtailment)']
                     )

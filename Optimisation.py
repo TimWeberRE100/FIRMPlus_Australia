@@ -54,8 +54,8 @@ def instantiate_model():
     model.cphp = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals, 
-        bounds=lambda m, n: (contingency[n-1], 20),
-        initialize=lambda m, n: (contingency[n-1]+10)/2,
+        bounds=lambda m, n: (0, 20),
+        initialize=lambda m, n: 10,
         )
     model.cphe = pyo.Var(
         model.nodes, 
@@ -95,7 +95,7 @@ def instantiate_model():
                                                + pyo.summation(m.bio)*0.001*resolution/years <= 20.0) #TWh p.a.
     
 
-    model.constr_gas_peaking_CF = pyo.Constraint(model.nodes, rule=lambda m, n: sum((m.gas[t,n] for t in m.t)) * resolution / years <= 0.2 * m.cgas[n] * 8760)
+    model.constr_gas_peaking = pyo.Constraint(model.t, rule=lambda m, t: sum((m.gas[t, n] for n in m.nodes)) <= 0.2*MLoad[t-1].sum())
 
     def constr_state_of_charge(m, t, n):
         if t==1:

@@ -10,19 +10,17 @@ import pyomo.environ as pyo
 from pyomo.opt import SolverFactory
 
 from Input import * 
-from Costs import *
-
-
 
 #%%
 def instantiate_model():
     print("Instantiating optimiser:", dt.now())
     model = pyo.ConcreteModel()
     
-    adj_energy = (MLoad[:intervals, :].sum() * pow(10,3) * resolution / years)
+    adj_energy = (MLoad[:intervals, :].sum() * 1000 * resolution / years)
     
     model.pvl   = pyo.RangeSet(npv)
-    model.windl = pyo.RangeSet(nwind)
+    model.onswl = pyo.RangeSet(nonsw)
+    model.offwl = pyo.RangeSet(noffw)
     model.lines = pyo.RangeSet(nhvdc)
     model.nodes = pyo.RangeSet(nodes)
     model.t     = pyo.RangeSet(intervals) 
@@ -30,7 +28,7 @@ def instantiate_model():
     model.hvdcCost = pyo.Param(
         model.lines, 
         domain=pyo.Reals, 
-        initialize = lambda m, n: transmission_costs[n-1]+substation_costs
+        initialize = lambda m, n: costs.hvdc[n-1]
         )
     
     model.cpv = pyo.Var(
@@ -39,8 +37,14 @@ def instantiate_model():
         bounds=lambda _: (0, 20),
         initialize=lambda _i: 10,
         )
-    model.cwind = pyo.Var(
-        model.windl, 
+    model.consw = pyo.Var(
+        model.onswl, 
+        domain=pyo.NonNegativeReals, 
+        bounds=lambda _: (0, 20),
+        initialize=lambda _: 10,
+        )
+    model.coffw = pyo.Var(
+        model.offwl, 
         domain=pyo.NonNegativeReals, 
         bounds=lambda _: (0, 20),
         initialize=lambda _: 10,
@@ -48,14 +52,14 @@ def instantiate_model():
     model.cgas = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals,
-        bounds=lambda _: (0, 20),
-        initialize=lambda _: 10,
+        bounds=lambda _: (0, 0),
+        initialize=lambda _: 0,
         )
     model.cphp = pyo.Var(
         model.nodes, 
         domain=pyo.NonNegativeReals, 
-        bounds=lambda m, n: (contingency[n-1], 20),
-        initialize=lambda m, n: (contingency[n-1]+10)/2,
+        bounds=lambda m, n: (0,20),#(contingency[n-1], 20),
+        initialize=lambda m, n: 10,#(contingency[n-1]+10)/2,
         )
     model.cphe = pyo.Var(
         model.nodes, 
@@ -66,7 +70,7 @@ def instantiate_model():
     model.chvdc = pyo.Var(
         model.lines, 
         domain=pyo.NonNegativeReals, 
-        bounds=lambda _: (0,20),
+        bounds=lambda _: (0,50),
         initialize=lambda _: 10,
         )
     
@@ -104,13 +108,13 @@ def instantiate_model():
             return m.storage[t, n] == m.storage[t-1, n] - m.discharge[t-1, n] * resolution + m.charge[t-1, n] * resolution * efficiency
     
     model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
-    
         
     def expr_energy_balance(m, t, n):
         return (MLoad[t-1, n-1] 
                 + m.charge[t,n] 
-                - sum((m.cpv[z]*TSPV[t-1, z-1] for z in pv_zs_in_n[n-1])) 
-                - sum((m.cwind[z]*TSWind[t-1, z-1] for z in wind_zs_in_n[n-1]))
+                - sum((m.cpv[z]  *TSPV[  t-1, z-1] for z in pv_zs_in_n[  n-1])) 
+                - sum((m.consw[z]*TSOnsW[t-1, z-1] for z in onsw_zs_in_n[n-1]))
+                - sum((m.coffw[z]*TSOffW[t-1, z-1] for z in offw_zs_in_n[n-1]))
                 - m.hydro[t,n] 
                 - m.bio[t,n] 
                 - m.gas[t,n]
@@ -122,27 +126,30 @@ def instantiate_model():
     model.energy_balance = pyo.Expression(model.t, model.nodes, rule=expr_energy_balance)
     model.constr_energy_balance = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.energy_balance[t,n]<=0)
     
-    model.CostPV    = pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * pv_costs)
-    model.CostWind  = pyo.Expression(rule=lambda m: pyo.summation(m.cwind)     * wind_costs)
-    model.CostGas   = pyo.Expression(rule=lambda m: pyo.summation(m.cgas) * gas_costs[0] + 
-                                                    pyo.summation(m.gas) * resolution / years * 1000 * gas_costs[1]) #GW -> MWh p.a.
-    model.CostPH    = pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * storage_costs[0] +
-                                                    pyo.summation(m.cphe)      * storage_costs[1] + 
-                                                    pyo.summation(m.discharge) * resolution / years * 1000 * storage_costs[2] + 
-                                                    storage_costs[3])
-    model.CostHydro = pyo.Expression(rule=lambda m: pyo.summation(m.hydro)     * resolution / years * 1000 * hydro_cost)
-    model.CostBio   = pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * 1000 * (hydro_cost+0.1))
+    model.CostPV    = pyo.Expression(rule=lambda m: pyo.summation(m.cpv)       * costs.pv)
+    model.CostOnsW  = pyo.Expression(rule=lambda m: pyo.summation(m.consw)     * costs.onsw)
+    model.CostOffW  = pyo.Expression(rule=lambda m: pyo.summation(m.coffw)     * costs.offw)
+    model.CostGas   = pyo.Expression(rule=lambda m: pyo.summation(m.cgas)      * costs.gas[0] + 
+                                                    pyo.summation(m.gas) * resolution / years * 1000 * costs.gas[1]) #GW -> MWh p.a.
+    model.CostPH    = pyo.Expression(rule=lambda m: pyo.summation(m.cphp)      * costs.phes[0] +
+                                                    pyo.summation(m.cphe)      * costs.phes[1] + 
+                                                    pyo.summation(m.discharge) * resolution / years * 1000 * costs.phes[2] + 
+                                                    costs.phes[3])
+    model.CostHydro = pyo.Expression(rule=lambda m: pyo.summation(m.hydro)     * resolution / years * 1000 * costs.hydro)
+    model.CostBio   = pyo.Expression(rule=lambda m: pyo.summation(m.bio)       * resolution / years * 1000 * (costs.hydro+0.1))
     model.CostDC    = pyo.Expression(rule=lambda m: pyo.summation(m.hvdcCost, m.chvdc))
     model.CostAC    = pyo.Expression(rule=lambda m: (
         pyo.summation(m.cpv) + 
-        pyo.summation(m.cwind) +
+        pyo.summation(m.consw) +
+        pyo.summation(m.coffw) +
         pyo.summation(m.cgas) +
-        0) * ACgen_costs
+        0) * costs.ac
         )
     
     model.LCOE = pyo.Expression(rule=lambda m: (
         m.CostPV + 
-        m.CostWind + 
+        m.CostOnsW + 
+        m.CostOffW + 
         m.CostGas +
         m.CostPH + 
         m.CostHydro + 
@@ -156,7 +163,8 @@ def instantiate_model():
 
 def fix_investment(model):
     model.cpv.fix()
-    model.cwind.fix()
+    model.consw.fix()
+    model.coffw.fix()
     model.cgas.fix()
     model.cphp.fix()
     model.cphe.fix()
@@ -209,18 +217,20 @@ def cost_optimise(model):
 
 def reconstruct_from_capacities(capacities):
     model = instantiate_model()
-    for v in model.cpv.values():
-        v.fix(capacities[      i-1])
-    for i in model.cwind:
-        v.fix(capacities[pidx +i-1])
-    for i in model.cphp:
-        v.fix(capacities[widx +i-1])
-    for i in model.cphe:
-        v.fix(capacities[spidx+i-1])
-    for i in model.chvdc:
-        v.fix(capacities[seidx+i-1])
-    for i in model.cgas:
-        v.fix(capacities[hvidx+i-1])
+    for i, v in enumerate(model.cpv.values()):
+        v.fix(capacities[        i-1])
+    for i, v in enumerate(model.consw.values()):
+        v.fix(capacities[pidx   +i-1])
+    for i, v in enumerate(model.coffw.values()):
+        v.fix(capacities[onswidx+i-1])
+    for i, v in enumerate(model.cphp.values()):
+        v.fix(capacities[offwidx+i-1])
+    for i, v in enumerate(model.cphe.values()):
+        v.fix(capacities[spidx  +i-1])
+    for i, v in enumerate(model.chvdc.values()):
+        v.fix(capacities[seidx  +i-1])
+    for i, v in enumerate(model.cgas.values()):
+        v.fix(capacities[hvidx  +i-1])
 
     model = cost_optimise(model)
     model = optimise_operations(model)
@@ -233,26 +243,22 @@ if __name__ == '__main__':
     model.LCOE.display()
     
     #%%
-    
     S = Solution(model, years)
     
-    print('pv:', S.cpv_n)
-    print('wind:', S.cwind_n)
-    print('gas:', S.cgas)
-    print('php:', S.cphp)
-    print('phe:', S.cphe)
-    print('chvdc:', S.chvdc)
+    print('pv:',        S.cpv_n)
+    print('ons wind:',  S.consw_n)
+    print('offs wind:', S.coffw_n)
+    print('gas:',       S.cgas)
+    print('php:',       S.cphp)
+    print('phe:',       S.cphe)
+    print('chvdc:',     S.chvdc)
     
     try:
-        with open(f'Results/Optimisation_resultx{scenario}.csv', 'w', newline="") as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow([S.LCOE] + list(S.cpv) + list(S.cwind) + list(S.cphp) + list(S.cphe) + list(S.chvdc))
+        np.savetxt(f'Results/Optimisation_resultx{scenario}.csv', S.x.reshape(1,-1), fmt='%s', delimiter=',')
     except FileNotFoundError:
         import os 
         os.mkdir('Results')
-        with open(f'Results/Optimisation_resultx{scenario}.csv', 'w', newline="") as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow([S.LCOE] + list(S.cpv) + list(S.cwind) + list(S.cphp) + list(S.cphe) + list(S.chvdc))
-    
+        np.savetxt(f'Results/Optimisation_resultx{scenario}.csv', S.x.reshape(1,-1), fmt='%s', delimiter=',')
+
     from Statistics import Information
     Information(S)

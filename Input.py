@@ -6,31 +6,43 @@
 import numpy as np
 import pyomo.environ as pyo
 from argparse import ArgumentParser
+
+from Costs import cost_factors
+
 np.set_printoptions(suppress=True)
 
 parser = ArgumentParser()
-parser.add_argument('-s', default=21, type=int, required=False, help='scenario')
-parser.add_argument('-y', default=1, type=int, required=False, help='no. of years')
+parser.add_argument('-s', default=21,      type=int, required=False, help='scenario')
+parser.add_argument('-c', default='csiro', type=str, required=False, help='cost source for pv/wind = csiro|irena')
+parser.add_argument('-y', default=1,       type=int, required=False, help='no. of years')
 args = parser.parse_args()
 
 scenario = args.s
 years = args.y
+cost_source = args.c.lower()
 
 Nodel = np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])
-PVl =   np.array(['NSW']*7 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*3 + ['SA']*6 + ['TAS']*0 + ['VIC']*1 + ['WA']*1 + ['NT']*1)
-Windl = np.array(['NSW']*8 + ['FNQ']*1 + ['QLD']*2 + ['FNQ']*2 + ['SA']*8 + ['TAS']*4 + ['VIC']*4 + ['WA']*3 + ['NT']*1)
+PVl   = np.array(['NSW']*9 + ['FNQ']*5 + ['QLD']*4 + ['SA']*9 + ['TAS']*3 + ['VIC']*6)
+OnsWl = np.array(['NSW']*9 + ['FNQ']*5 + ['QLD']*4 + ['SA']*9 + ['TAS']*3 + ['VIC']*6)
+OffWl = np.array(['NSW']*2 + ['SA']*1 + ['TAS']*2 + ['VIC']*2)
 
 n_node = dict((name, i) for i, name in enumerate(Nodel))
-Nodel_int, PVl_int, Windl_int = (np.array([n_node[node] for node in x], dtype=np.int64) for x in (Nodel, PVl, Windl))
-Nodel_int, PVl_int, Windl_int = (x.astype(np.int64) for x in (Nodel_int, PVl_int, Windl_int))
+nodesupportl = np.array(['FNQ', 'NSW', 'QLD', 'SA', 'TAS', 'VIC'])
+nodesupport = len(np.setdiff1d(Nodel, nodesupportl))
+
+Nodel_int, PVl_int, OnsWl_int, OffWl_int = (np.array([n_node[node] for node in x], dtype=np.int64) for x in (Nodel, PVl, OnsWl, OffWl))
+Nodel_int, PVl_int, OnsWl_int, OffWl_int = (x.astype(np.int64) for x in (Nodel_int, PVl_int, OnsWl_int, OffWl_int))
 
 resolution = 0.5 # timestep resolution in hours
 StartCharge = 0.5 # starting level of storage energy
 
-MLoad = np.genfromtxt('Data/electricity.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(Nodel))) 
+MLoad = np.genfromtxt('Data/electricity.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(Nodel)-nodesupport)) # EOLoad(t, j), MW
+#behind the meter solar 
+MPVnsg = np.genfromtxt('Data/non-scheduled_pv.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(Nodel)-nodesupport))
 
-TSPV = np.genfromtxt('Data/pv.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(PVl))) 
-TSWind = np.genfromtxt('Data/wind.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(Windl))) 
+TSPV   = np.genfromtxt('Data/utility_pv.csv',     delimiter=',', skip_header=1, usecols=range(4, 4+len(PVl))) # TSPV(t, i), MW
+TSOnsW = np.genfromtxt('Data/onshore_high.csv',   delimiter=',', skip_header=1, usecols=range(4, 4+len(OnsWl))) # TSWind(t, i), MW
+TSOffW = np.genfromtxt('Data/offshore_fixed.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(OffWl))) # TSWind(t, i), MW
 
 assets = np.genfromtxt('Data/hydrobio.csv', dtype=None, delimiter=',', encoding=None)[1:, 1:].astype(np.float64)
 CHydro, CBio = [assets[:, x] * pow(10, -3) for x in range(assets.shape[1])] 
@@ -38,32 +50,38 @@ CHydro, CBio = [assets[:, x] * pow(10, -3) for x in range(assets.shape[1])]
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
 DClengths = np.array([1500, 1000, 1000, 800, 1200, 2400, 400, 700]) 
 DCloss = DClengths * 0.03 * pow(10, -3)
+undersea_mask = np.array([0, 0, 0, 0, 0, 0, 0, 1], dtype=bool)
+
+network = np.array([['FNQ', 'QLD'], #FNQ-QLD
+                    ['NSW', 'QLD'], #NSW-QLD
+                    ['NSW', 'SA' ], #NSW-SA
+                    ['NSW', 'VIC'], #NSW-VIC
+                    ['NT',  'SA' ], #NT-SA
+                    ['SA',  'WA' ], #SA-WA
+                    ['TAS', 'VIC'], #TAS-VIC
+                    ['SA',  'VIC'], #SA-VIC
+                    ])
+networksupport_mask = np.array([node in nodesupportl for node in network.ravel()]).reshape(network.shape).prod(axis=1).astype(np.bool_)
+DClengths, DCloss, undersea_mask, network = [x[networksupport_mask] for x in (DClengths, DCloss, undersea_mask, network)]
+network = np.array([n_node[node] for node in network.ravel()]).reshape(network.shape).astype(np.int64)
 
 efficiency = 0.8 # round trip efficiency of storage
-factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
+# efficiency = efficiency ** 0.5 # symmetric one-way efficiency
 
-network = np.array([[0, 3], #FNQ-QLD
-                    [1, 3], #NSW-QLD
-                    [1, 4], #NSW-SA
-                    [1, 6], #NSW-VIC
-                    [2, 4], #NT-SA
-                    [4, 7], #SA-WA
-                    [5, 6], #TAS-VIC
-                    [4, 6], #SA-VIC
-                    ], dtype=np.int64)
-    
 if scenario<=17:
     node = Nodel[scenario % 10]
 
-    MLoad = MLoad[:, Nodel==node]
-    TSPV = TSPV[:, PVl==node]
-    TSWind = TSWind[:, Windl==node]
-    CHydro, CBio = [x[Nodel==node] for x in (CHydro, CBio)]
+    MLoad   = MLoad[:,   Nodel ==node]
+    TSPV    = TSPV[:,    PVl   ==node]
+    TSOnsW  = TSOnsW[:,  OnsWl ==node]
+    TSOffW  = TSOffW[:,  OffWl==node]
+    CHydro, CBio = [x[   Nodel ==node] for x in (CHydro, CBio)]
 
-    Nodel_int, PVl_int, Windl_int = [x[x==n_node[node]] for x in (Nodel_int, PVl_int, Windl_int)]
-    Nodel, PVl, Windl = [x[x==node] for x in (Nodel, PVl, Windl)]
+    Nodel_int, PVl_int, OnsWl_int, OffWl_int = [x[x==n_node[node]] for x in (Nodel_int, PVl_int, OnsWl_int, OffWl_int)]
+    Nodel, PVl, OnsWl, OffWl                 = [x[x==node]         for x in (Nodel, PVl, OnsWl, OffWl)]
     network_mask = np.zeros(7, bool)
     network = np.empty((0,0), int)
+    masked_DCloss = np.empty(0, float)
 
 elif scenario>=21:
     coverage = [np.array(['NSW', 'QLD', 'SA', 'TAS', 'VIC']),
@@ -75,88 +93,98 @@ elif scenario>=21:
                 np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC']),
                 np.array(['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'])][scenario % 10 - 1] 
     
-    MLoad = MLoad[:, np.in1d(Nodel, coverage)]
-    TSPV = TSPV[:, np.in1d(PVl, coverage)]
-    TSWind = TSWind[:, np.in1d(Windl, coverage)]
-    CHydro, CBio = [x[np.in1d(Nodel, coverage)] for x in (CHydro, CBio)]
+    MLoad =  MLoad[:,  np.isin(nodesupportl, coverage)]
+    TSPV =   TSPV[:,   np.isin(PVl,   coverage)]
+    TSOnsW = TSOnsW[:, np.isin(OnsWl, coverage)]
+    TSOffW = TSOffW[:, np.isin(OffWl, coverage)]
+    CHydro, CBio = [x[ np.isin(Nodel, coverage)] for x in (CHydro, CBio)]
     
     if 'FNQ' not in coverage:
         MLoad[:, np.where(coverage=='QLD')[0][0]] /= 0.9
         
     coverage_int = np.array([n_node[node] for node in coverage])
-    Nodel_int, PVl_int, Windl_int = [x[np.isin(x, coverage_int)] for x in (Nodel_int, PVl_int, Windl_int)]
-    Nodel, PVl, Windl = [x[np.isin(x, coverage)] for x in (Nodel, PVl, Windl)]
+    Nodel_int, PVl_int, OnsWl_int, OffWl_int = [x[np.isin(x, coverage_int)] for x in (Nodel_int, PVl_int, OnsWl_int, OffWl_int)]
+    Nodel, PVl, OnsWl, OffWl                 = [x[np.isin(x, coverage)]     for x in (Nodel, PVl, OnsWl, OffWl)]
 
     network_mask = np.array([(network==j).sum(axis=1).astype(np.bool_) for j in Nodel_int]).sum(axis=0)==2
     network = network[network_mask,:]
     networkdict = {v:k for k, v in enumerate(Nodel_int)}
     #translate into indicies rather than Nodel_int values
     network = np.array([networkdict[n] for n in network.flatten()], np.int64).reshape(network.shape)
+    masked_DCloss = DCloss[network_mask]
 
+if 'WA' in Nodel or 'NT' in Nodel:
+    raise NotImplementedError("Try a different scenario")
 
 if scenario >= 31:
     import warnings
     warnings.simplefilter('ignore', RuntimeWarning)
     
-    TSPV = np.stack([TSPV[:, PVl==node].mean(axis=1) for node in coverage]).T
-    TSWind = np.stack([TSWind[:, Windl==node].mean(axis=1) for node in coverage]).T
+    TSPV =   np.stack([TSPV[:,   PVl  ==node].mean(axis=1) for node in coverage]).T
+    TSOnsW = np.stack([TSOnsW[:, OnsWl==node].mean(axis=1) for node in coverage]).T
+    TSOffW = np.stack([TSOffW[:, OffWl==node].mean(axis=1) for node in coverage]).T
     # having full of zeros and setting lb,ub=0,0 makes code faster
-    TSPV = np.nan_to_num(TSPV, False, 0)
+    TSOffW = np.nan_to_num(TSOffW, False, 0)
     warnings.simplefilter('default', RuntimeWarning)
     
-    Nodel_int, PVl_int, Windl_int = [np.unique(x) for x in (Nodel_int, PVl_int, Windl_int)]
-    Nodel, PVl, Windl = [np.unique(x)  for x in (Nodel, PVl, Windl)]
+    Nodel_int, PVl_int, OnsWl_int, OffWl_int = [np.unique(x) for x in (Nodel_int, PVl_int, OnsWl_int, OffWl_int)]
+    Nodel, PVl, OnsWl, OffWl                 = [np.unique(x) for x in (Nodel, PVl, OnsWl, OffWl)]
     
 intervals, nodes = MLoad.shape
-pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
+pzones, onswzones, offwzones = TSPV.shape[1], TSOnsW.shape[1],TSOffW.shape[1]
 
 energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
-firstyear = 2020
+firstyear = 2025
 finalyear = firstyear+years-1
 
 
 #%% 
 # Find better way to sort these?
 nhvdc = network_mask.sum()
-pidx, widx, spidx, seidx, hvidx = (
-    pzones, pzones+wzones, pzones+wzones+nodes, pzones+wzones+nodes+nodes, pzones+wzones+nodes+nodes+nhvdc)
+
+pidx    =           pzones
+onswidx = pidx    + onswzones
+offwidx = onswidx + offwzones
+spidx   = offwidx + nodes
+seidx   = spidx   + nodes
+hvidx   = seidx   + nhvdc
+gidx    = hvidx   + nodes
 
 MLoad = MLoad / 1000. #MW to GW
     
-masked_DCloss = DCloss[network_mask]
-
-pv_zs_in_n = [np.where(PVl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
-wind_zs_in_n = [np.where(Windl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
+pv_zs_in_n =   [np.where(PVl  ==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
+onsw_zs_in_n = [np.where(OnsWl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
+offw_zs_in_n = [np.where(OffWl==node)[0] + 1 for node in Nodel] # pyomo uses 1-indexing
 
 pos_export_lines = [np.where(network[:,0]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
 neg_export_lines = [np.where(network[:,1]==n)[0] + 1 for n in range(nodes)] # pyomo uses 1-indexing
 
-npv = len(PVl)
-nwind = len(Windl)
-
-if scenario >= 21:
-    LegPH, LegINTC = -1, -1
-else:
-    LegPH, LegINTC = 0,0 
+npv    = len(PVl)
+nonsw  = len(OnsWl)
+noffw  = len(OffWl)
 
 ndays = 365*years
 intervals = int(ndays*24/resolution)
 
-xlen = npv + nwind + nodes*2 + nhvdc
+xlen = npv + nonsw + noffw + nodes*2 + nhvdc + nodes
 
-from Costs import * 
+costs = cost_factors(cost_source, DClengths, undersea_mask)
+costs.hvdc = costs.hvdc[network_mask]
 
 #%%
+def zero_safe_divide(numerator, denominator, retval=0):
+    return numerator / denominator if denominator != 0 else retval
+
 class Solution:
     def __init__(self, model, years=years):
         self.scenario, self.nodes = scenario, nodes
-        self.Nodel, self.PVl, self.Windl = Nodel, PVl, Windl
+        self.Nodel, self.PVl, self.OnsWl, self.OffWl = Nodel, PVl, OnsWl, OffWl
         
         self.network, self.network_mask, self.DCloss = network, network_mask, DCloss[network_mask]
-        self.pos_export_lines = [np.where(network[:,0]==n)[0] for n in range(nodes)] # pyomo uses 1-indexing
-        self.neg_export_lines = [np.where(network[:,1]==n)[0] for n in range(nodes)] # pyomo uses 1-indexing
+        self.pos_export_lines = [np.where(network[:,0]==n)[0] for n in range(nodes)]
+        self.neg_export_lines = [np.where(network[:,1]==n)[0] for n in range(nodes)]
 
         self.firstyear, self.years = firstyear, years
         self.finalyear = self.firstyear+self.years-1
@@ -167,7 +195,8 @@ class Solution:
         
         # capacities in GW and GWh
         self.cpv    = np.array([model.cpv[i].value   for i in model.cpv])
-        self.cwind  = np.array([model.cwind[i].value for i in model.cwind])
+        self.consw  = np.array([model.consw[i].value for i in model.consw])
+        self.coffw  = np.array([model.coffw[i].value for i in model.coffw])
         self.cgas   = np.array([model.cgas[i].value  for i in model.cgas])
         self.cphp   = np.array([model.cphp[i].value  for i in model.cphp])
         self.cphe   = np.array([model.cphe[i].value  for i in model.cphe]) 
@@ -175,8 +204,11 @@ class Solution:
         self.chydro = CHydro
         self.cbio   = CBio
 
+        self.x = np.concatenate((self.cpv, self.consw, self.coffw, self.cphp, self.cphe, self.chvdc, self.cgas))
+
         self.cpv_n   = np.array([self.cpv[  np.where(self.PVl  ==node)[0]].sum() for node in self.Nodel])
-        self.cwind_n = np.array([self.cwind[np.where(self.Windl==node)[0]].sum() for node in self.Nodel])
+        self.consw_n = np.array([self.consw[np.where(self.OnsWl==node)[0]].sum() for node in self.Nodel])
+        self.coffw_n = np.array([self.coffw[np.where(self.OffWl==node)[0]].sum() for node in self.Nodel])
 
         # operations in MW and MWh
         self.Discharge = np.array([model.discharge[i].value for i in model.discharge]).reshape(-1, nodes) * 1000.  #GW to MW
@@ -194,16 +226,17 @@ class Solution:
         for t in range(self.Charge.shape[0]):
             for n in range(self.Charge.shape[1]):
                 self.Transmission[t, n]= (
-                    + sum((Hvdc_pos[t, l] - Hvdc_neg[t, l]*(1-self.DCloss[l]) for l in self.pos_export_lines[n]))
-                    + sum((Hvdc_neg[t, l] - Hvdc_pos[t, l]*(1-self.DCloss[l]) for l in self.neg_export_lines[n]))
+                    + sum((Hvdc_neg[t, l]*(1-self.DCloss[l]) - Hvdc_pos[t, l] for l in self.pos_export_lines[n]))
+                    + sum((Hvdc_pos[t, l]*(1-self.DCloss[l]) - Hvdc_neg[t, l]for l in self.neg_export_lines[n]))
                 )
                 
-        self.Transmission * 1000.  
-        self.PV = self.cpv*TSPV[:self.intervals, :] * 1000.
-        self.Wind = self.cwind*TSWind[:self.intervals, :] * 1000.
+        self.Load =              MLoad[ :self.intervals, :] * 1000.
+        self.PV   = self.cpv   * TSPV[  :self.intervals, :] * 1000.
+        self.OnsW = self.consw * TSOnsW[:self.intervals, :] * 1000.
+        self.OffW = self.coffw * TSOffW[:self.intervals, :] * 1000.
         self.PV   = np.stack([self.PV[:,   np.where(self.PVl  ==node)[0]].sum(axis=1) for node in self.Nodel]).T
-        self.Wind = np.stack([self.Wind[:, np.where(self.Windl==node)[0]].sum(axis=1) for node in self.Nodel]).T
-        self.Load = 1000. * MLoad[:self.intervals, :]
+        self.OnsW = np.stack([self.OnsW[:, np.where(self.OnsWl==node)[0]].sum(axis=1) for node in self.Nodel]).T
+        self.OffW = np.stack([self.OffW[:, np.where(self.OffWl==node)[0]].sum(axis=1) for node in self.Nodel]).T
         
         self.Spillage = -np.minimum(0,
             self.Load 
@@ -213,46 +246,53 @@ class Solution:
             - self.Bio 
             - self.Gas
             - self.PV 
-            - self.Wind 
-            + self.Transmission
+            - self.OnsW 
+            - self.OffW
+            - self.Transmission
             )
         
-        # self.GPV, self.GWind, self.GHydro, self.GBio = [x * pow(10, -6) * self.resolution / self.years for x in 
-        #                                                 (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum())] #TWh p.a.
-        # self.CFPV, self.CFWind = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76)
-
-        self.GPV, self.GWind, self.GHydro, self.GBio, self.GGas = [x * pow(10, -6) * self.resolution / self.years for x in 
-                                                        (self.PV.sum(), self.Wind.sum(), self.Hydro.sum(), self.Bio.sum(), self.Gas.sum())] #TWh p.a.
-        self.CFPV, self.CFWind, self.CFGas = (self.GPV / self.cpv.sum() / 8.76, self.GWind / self.cwind.sum() / 8.76, self.GGas/self.cgas.sum() / 8.76)
-
-        CostPV = pv_costs * self.cpv.sum()  
-        CostWind = wind_costs * self.cwind.sum()  
-        CostGas = gas_costs[0] * self.cgas.sum() + gas_costs[1] * self.GGas * pow(10, 6) 
-        CostHydro = hydro_cost * self.GHydro 
-        CostBio = (hydro_cost + 0.1) * self.GBio 
-        CostPH = (storage_costs[0] * self.cphp.sum() +
-                  storage_costs[1] * self.cphe.sum() +
-                  storage_costs[2] * self.Discharge.sum()*resolution/years + 
-                  storage_costs[3])
-        CostDC = (self.chvdc*(transmission_costs+substation_costs)).sum()
-        CostAC = (self.cpv.sum() + self.cwind.sum()
-         + self.cgas.sum()
-         )*ACgen_costs
+        self.GPV, self.GOnsW, self.GOffW, self.GHydro, self.GBio, self.GGas, self.GPHES = [
+            x * self.resolution / self.years 
+            for x in (self.PV.sum(axis=0), self.OnsW.sum(axis=0), self.OffW.sum(axis=0), self.Hydro.sum(axis=0), 
+                      self.Bio.sum(axis=0), self.Gas.sum(axis=0), self.Discharge.sum(axis=0))] #TWh p.a.
+        
+        self.CFPV, self.CFOnsW, self.CFOffW, self.CFGas = (
+            zero_safe_divide(G, c * 0.0876) for G, c in zip((self.GPV.sum(), self.GOnsW.sum(), self.GOffW.sum(), self.GGas.sum()), 
+                                                            (self.cpv.sum(), self.consw.sum(), self.coffw.sum(), self.cgas.sum())))
+        
+        self.CostPV    = costs.pv     * self.cpv_n
+        self.CostOnsW  = costs.onsw   * self.consw_n
+        self.CostOffW  = costs.offw   * self.coffw_n
+        self.CostGas   =(costs.gas[0] * self.cgas
+                       + costs.gas[1] * self.GGas) #TWh p.a. to MWh p.a.)
+        self.CostHydro = costs.hydro * self.GHydro
+        self.CostBio   = (costs.hydro + 0.1) * self.GBio 
+        self.CostPH = (costs.phes[0] * self.cphp +
+                       costs.phes[1] * self.cphe +
+                       costs.phes[2] * self.GPHES + # ignore vom
+                       costs.phes[3])
+        self.CostDC    = costs.hvdc * self.chvdc
+        self.CostAC    = (self.cpv_n + self.consw_n + self.coffw_n + self.cgas)*costs.ac
 
         self.Energy = self.Load.sum() * self.resolution / self.years  # MWh p.a.
 
-        self.LCOE = (CostPV + CostWind + CostGas + CostHydro + CostBio +
-                CostPH + CostDC + CostAC) / self.Energy
-        self.LCOG = ((CostPV + CostWind + CostHydro + CostBio) 
-                 / ((self.GPV + self.GWind + self.GHydro + self.GBio) * pow(10, 6)))
-        self.LCOGP = CostPV / (self.GPV * pow(10, 6)) if self.GPV != 0 else 0
-        self.LCOGW = CostWind / (self.GWind * pow(10, 6))if self.GWind != 0 else 0
-        self.LCOGH = CostHydro / (self.GHydro * pow(10, 6)) if self.GHydro != 0 else 0
-        self.LCOGB = CostBio / (self.GBio * pow(10, 6)) if self.GBio != 0 else 0
-        self.LCOGG = CostGas / (self.GGas * pow(10, 6)) if self.GGas != 0 else 0
+        self.LCOE = (self.CostPV.sum() + self.CostOnsW.sum() + self.CostOffW.sum() + 
+                     self.CostGas.sum() + self.CostHydro.sum() + self.CostBio.sum() + 
+                     self.CostPH.sum() + self.CostDC.sum() + self.CostAC.sum()) / self.Energy
+        self.LCOG = ((self.CostPV.sum() + self.CostOnsW.sum() + self.CostOffW.sum() + 
+                      self.CostHydro.sum() + self.CostBio.sum() + self.CostGas.sum()) /
+                     (self.GPV.sum() + self.GOnsW.sum() + self.GOffW.sum() + self.GHydro.sum() + self.GBio.sum() + self.GGas.sum()))
+        
+        
+        self.LCOGP    = zero_safe_divide(self.CostPV.sum()    , self.GPV.sum()   )
+        self.LCOGOnsW = zero_safe_divide(self.CostOnsW.sum()  , self.GOnsW.sum() )
+        self.LCOGOffW = zero_safe_divide(self.CostOffW.sum()  , self.GOffW.sum() )
+        self.LCOGH    = zero_safe_divide(self.CostHydro.sum() , self.GHydro.sum())
+        self.LCOGB    = zero_safe_divide(self.CostBio.sum()   , self.GBio.sum()  )
+        self.LCOGG    = zero_safe_divide(self.CostGas.sum()   , self.GGas.sum()  )
 
         self.LCOB = self.LCOE - self.LCOG
-        self.LCOBS = CostPH / self.Energy
-        self.LCOBT = (CostDC + CostAC) / self.Energy
+        self.LCOBS = self.CostPH.sum() / self.Energy
+        self.LCOBT = (self.CostDC.sum() + self.CostAC.sum()) / self.Energy
         self.LCOBL = self.LCOB - self.LCOBS - self.LCOBT
 

@@ -4,7 +4,7 @@
 # Correspondence: bin.lu@anu.edu.au
 
 import numpy as np
-from numba import njit, float64, int64, prange, boolean
+from numba import njit, float64, int64, boolean
 from numba.experimental import jitclass
 
 from argparse import ArgumentParser
@@ -45,7 +45,7 @@ CPeak = CHydro + CBio - CBaseload # GW
 
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
 DCloss = np.array([1500, 1000, 1000, 800, 1200, 2400, 400]) * 0.03 * pow(10, -3)
-CDCmax = [100.]*7
+CDCmax = [16.]*len(DCloss)
 CDCmax[6] = 3 * 0.63 # GW
 
 efficiency = 0.8
@@ -113,11 +113,6 @@ elif scenario>=21:
     for n, row in enumerate(network):
         directconns[*row] = n
         directconns[*row[::-1]] = n
-    
-    # nodeline_mask = np.zeros((len(network), MLoad.shape[1]), np.bool_)
-    # for i in range(nodeline_mask.shape[0]):
-    #     for j in range(nodeline_mask.shape[1]):
-    #         nodeline_mask[i,j] = i in directconns[j]
     
     def network_neighbours(n):
         isn_mask = np.isin(network, n)
@@ -201,18 +196,22 @@ elif scenario>=21:
 intervals, nodes = MLoad.shape
 years = int(resolution * intervals / 8760)
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
+hvdclines = int(network_mask.sum())
 pidx, widx = pzones, pzones + wzones
 spidx, seidx = pzones + wzones + nodes, pzones + wzones + nodes + nodes
+tidx = pzones + wzones + nodes + nodes + hvdclines
 
 energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
 
-lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * len(networks[0]))
-ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [500.] * nodes + list(np.array(CDCmax)[network_mask]))
+lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * hvdclines# + [0.]
+              )
+ub = np.array([48.] * pzones + [48.]  * wzones + [48.] * nodes + [512.] * nodes + list(np.array(CDCmax)[network_mask])# + [180.]
+              )
 
-#%%
+#%% 
 from Simulation import Reliability
 
 @njit()
@@ -222,10 +221,12 @@ def F(S):
     Deficit = Reliability(S, flexible=np.zeros((intervals, nodes) , dtype=np.float64)) # Sj-EDE(t, j), MW
     Flexible = Deficit.sum() * resolution / years / efficiency # MWh p.a.
     Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
-    PenHydro = np.maximum(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
+    PenHydro = round(np.maximum(0, Hydro - 20_000_000), 6) # TWh p.a. to MWh p.a.
+    # Hydro = S.flex + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
+    # PenHydro = np.maximum(0, Deficit.sum()*resolution/years/efficiency - S.flex)
 
     Deficit = Reliability(S, flexible=np.ones((intervals, nodes), dtype=np.float64)*CPeak*1000) # Sj-EDE(t, j), GW to MW
-    PenDeficit = np.maximum(0, Deficit.sum() * resolution) # MWh
+    PenDeficit = round(np.maximum(0, Deficit.sum() * resolution),6) # MWh
 
     CHVDC = np.zeros(len(network_mask), dtype=np.float64)
     CHVDC[network_mask] = S.CHVDC
@@ -236,11 +237,11 @@ def F(S):
             ).sum()
 
     loss = np.zeros(len(network_mask), dtype=np.float64)
-    loss[network_mask] = S.TDC.sum(axis=0) * DCloss[network_mask]
+    loss[network_mask] = np.abs(S.TDC).sum(axis=0) * DCloss[network_mask]
     loss = loss.sum() * 0.000000001 * resolution / years # PWh p.a.
     LCOE = cost / np.abs(energy - loss)
     
-    return LCOE, (PenHydro+PenDeficit)
+    return LCOE, PenHydro+PenDeficit
 
 # Specify the types for jitclass
 solution_spec = [
@@ -257,6 +258,7 @@ solution_spec = [
     ('CPHP', float64[:]),
     ('CPHS', float64[:]),
     ('CHVDC', float64[:]),
+    # ('flex',float64),
     ('efficiency', float64),
     # ('Nodel_int', int64[:]), 
     # ('PVl_int', int64[:]),
@@ -323,8 +325,6 @@ class Solution:
         self.network, self.directconns = network, directconns
         self.trans_tdc_mask = trans_tdc_mask
         
-        # self.network2, self.network3, self.network4 = network2, network3, network4
-       
         self.MLoad = MLoad
 
         self.CPV = x[: pidx]  # CPV(i), GW
@@ -333,7 +333,6 @@ class Solution:
         # Manually replicating np.tile functionality for CPV and CWind
         CPV_tiled = np.zeros((intervals, len(self.CPV)))
         CWind_tiled = np.zeros((intervals, len(self.CWind)))
-        # CInter_tiled = np.zeros((intervals, len(self.CWind)))
         for i in range(intervals):
             for j in range(len(self.CPV)):
                 CPV_tiled[i, j] = self.CPV[j]
@@ -350,12 +349,10 @@ class Solution:
             
         self.CPHP = x[widx: spidx]  # CPHP(j), GW
         self.CPHS = x[spidx: seidx]  # S-CPHS(j), GWh
-        self.CHVDC = x[seidx:]
+        self.CHVDC = x[seidx: tidx]
+        # self.flex = x[tidx] * resolution/years/efficiency*1_000_000
         
         self.efficiency = efficiency
-
-        # self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
-        
 
         self.GBaseload = GBaseload
         self.CPeak = CPeak
@@ -374,6 +371,7 @@ class Solution:
 
 if __name__=='__main__':
     x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
+    # x = np.concatenate((x, np.array([180.])))
     solution = Solution(x)#/1.25) 
     
     def test():

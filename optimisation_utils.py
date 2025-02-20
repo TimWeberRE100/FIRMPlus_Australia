@@ -12,8 +12,24 @@ import datetime as dt
 from Input import *
 from Simulation import Reliability    
 
+
+CFPV = TSPV.mean(axis=0)
+CFWind = TSWind.mean(axis=0)
+
+UEPV = CFPV*8.760 # energy per year per unit installed capacity / 1000
+UEWind = CFWind*8.760 # energy per year per unit installed capacity / 1000
+
 @njit
-def Jacobian(x, lossfactor=None):
+def _lossfactor(x):
+    S = Solution(x) 
+    Reliability(S, flexible=np.ones((intervals, nodes), dtype=np.float64)*CPeak*1000)
+    loss = np.zeros(len(network_mask), dtype=np.float64)
+    loss[network_mask] = np.abs(S.TDC).sum(axis=0) * DCloss[network_mask]
+    return np.abs(energy - loss.sum() * 0.000_000_001 * resolution / years)
+
+
+@njit
+def Jacobian(x, lossfactor=energy):
     """
     Approximate local gradient of objective function w.r.t. each input variable
     """
@@ -27,22 +43,17 @@ def Jacobian(x, lossfactor=None):
     jac[widx:spidx, 2] += factor[2]
     jac[spidx:seidx, 3] += factor[3]
 
-    network_factors = np.arange(4, 11)[network_mask]
-    for i in range(network_mask.sum()):
-        jac[seidx+i, network_factors[i]] += factor[network_factors[i]]
+    # jac[:pidx] -= factor[14] * UEPV 
+    # jac[:widx] -= factor[14] * UEWind 
+
+    network_factors = np.arange(4, 11, 1, dtype=np.int64)[network_mask]
+    for i, n in enumerate(network_factors):
+        jac[seidx+i, n] += factor[n]
 
     if lossfactor is None:    
-        S = Solution(x) 
-        Reliability(S, flexible=np.ones((intervals, nodes), dtype=np.float64)*CPeak*1000)
-        
-        loss = np.zeros(len(network_mask), dtype=np.float64)
-        loss[network_mask] = S.TDC.sum(axis=0) * DCloss[network_mask]
-        jac[:seidx,-1] = np.abs(energy - loss.sum() * 0.000000001 * resolution / years)
-        loss = loss[network_mask] / x[seidx:] * (x[seidx:]+1)
-        jac[seidx:,-1] = np.abs(energy - loss.sum() * 0.000000001 * resolution / years)
+        lossfactor = _lossfactor(x)
     
-    else: 
-        jac[:, -1] = lossfactor
+    jac[:, -1] = lossfactor
     
     jac = jac[:, :-1].sum(axis=1)/jac[:,-1]
     
@@ -54,12 +65,12 @@ def cost(x):
     S._evaluate()
     return S.Lcoe
 
-@njit()
-def hessian(x, precision=1, dx=0.001, ddx=0.001):
-    jac1 = Jacobian(x, precision, dx)
-    jac2 = Jacobian(x, precision, dx+ddx)
-    hes = (jac2-jac1)/ddx
-    return hes
+# @njit()
+# def hessian(x, precision=1, dx=0.001, ddx=0.001):
+#     jac1 = Jacobian(x, precision, dx)
+#     jac2 = Jacobian(x, precision, dx+ddx)
+#     hes = (jac2-jac1)/ddx
+#     return hes
     
 @njit(parallel=True)
 def direct_jacobian(x, dx = 0.001):
@@ -106,7 +117,7 @@ Direct Measurement time (jit): {t_dir}
 if __name__ == '__main__':
     x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
 
-    np.set_printoptions(suppress=True)
+    np.set_printoptions(suppress=True) #print floats not scientific notation
     print(Jacobian(x))
     
     # x = np.genfromtxt('Results/Optimisation_resultx21.csv', dtype=np.float64, delimiter=',')

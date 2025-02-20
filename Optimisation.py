@@ -56,6 +56,8 @@ def instantiate_model():
         domain=pyo.NonNegativeReals, 
         bounds=lambda m, n: (0, 20),
         initialize=lambda m, n: 10,
+        bounds=lambda m, n: (contingency[n-1], 20),
+        initialize=lambda m, n: (contingency[n-1]+10)/2,
         )
     model.cphe = pyo.Var(
         model.nodes, 
@@ -105,7 +107,6 @@ def instantiate_model():
     
     model.constr_storage_state_of_charge = pyo.Constraint(model.t, model.nodes, rule=constr_state_of_charge)
     
-        
     def expr_energy_balance(m, t, n):
         return (MLoad[t-1, n-1] 
                 + m.charge[t,n] 
@@ -118,6 +119,7 @@ def instantiate_model():
                 + sum((m.hvdc_pos[t, l] - m.hvdc_neg[t, l]*(1-masked_DCloss[l-1]) for l in pos_export_lines[n-1]))
                 + sum((m.hvdc_neg[t, l] - m.hvdc_pos[t, l]*(1-masked_DCloss[l-1]) for l in neg_export_lines[n-1]))
                 )
+
     
     model.energy_balance = pyo.Expression(model.t, model.nodes, rule=expr_energy_balance)
     model.constr_energy_balance = pyo.Constraint(model.t, model.nodes, rule=lambda m, t, n: m.energy_balance[t,n]<=0)
@@ -151,7 +153,7 @@ def instantiate_model():
         m.CostAC
         ) / adj_energy
         )
-
+    
     return model 
 
 def fix_investment(model):

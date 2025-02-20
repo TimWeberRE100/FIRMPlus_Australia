@@ -95,14 +95,8 @@ elif scenario>=21:
 
 
 if scenario >= 31:
-    import warnings
-    warnings.simplefilter('ignore', RuntimeWarning)
-    
-    TSPV = np.stack([TSPV[:, PVl==node].mean(axis=1) for node in coverage]).T
-    TSWind = np.stack([TSWind[:, Windl==node].mean(axis=1) for node in coverage]).T
-    # having full of zeros and setting lb,ub=0,0 makes code faster
-    TSPV = np.nan_to_num(TSPV, False, 0)
-    warnings.simplefilter('default', RuntimeWarning)
+    TSPV = np.stack([TSPV[:, PVl==node].mean(axis=1) for node in PVl]).T
+    TSWind = np.stack([TSWind[:, Windl==node].mean(axis=1) for node in Windl]).T
     
     Nodel_int, PVl_int, Windl_int = [np.unique(x) for x in (Nodel_int, PVl_int, Windl_int)]
     Nodel, PVl, Windl = [np.unique(x)  for x in (Nodel, PVl, Windl)]

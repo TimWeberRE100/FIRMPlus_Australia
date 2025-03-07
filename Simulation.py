@@ -8,6 +8,8 @@ Created on Wed May  8 14:53:22 2024
 import numpy as np
 from numba import njit
 
+from Interconnection import hvdc
+
 perfect = np.array([0,1,3,6,10,15,21])
 
 
@@ -119,105 +121,6 @@ def Reliability(solution, flexible, start=None, end=None):
     
     return Deficit
 
-@njit
-def hvdc(Fillt, Surplust, Hcapacity, network, networksteps, Importt, Exportt):
-    for leg in range(networksteps):
-        for n in np.where(Fillt>0)[0]:
-            donors = network[:, n, perfect[leg]:perfect[leg+1], :]
-            donors, donor_lines = donors[0, :, :], donors[1, :, :]
-  
-            valid_mask = donors[-1] != -1
-            if np.prod(~valid_mask):
-                break
-            donor_lines = donor_lines[:, valid_mask]
-            donors = donors[:, valid_mask]
-            if Surplust[donors[-1]].sum() == 0:
-                continue
-  
-            ndonors = valid_mask.sum()
-            donors = np.concatenate((n*np.ones((1, ndonors), np.int64), donors))
-            
-            _transmission = np.zeros_like(Fillt)
-            for d, dl in zip(donors[-1], donor_lines.T): #print(d,dl)
-                donor_line_cap = np.inf
-                for l in dl:
-                    # transmission cap is minimum of capacities of lines involved
-                    donor_line_cap = min(
-                        donor_line_cap, 
-                        Hcapacity[l] - Importt[l, :].sum()
-                        )
-                _transmission[d] = min(donor_line_cap, Surplust[d])
-                
-            _transmission /= max(1, _transmission.sum()/Fillt[n])
-            
-            for nd, d, dl in zip(range(ndonors), donors[-1], donor_lines.T):
-                for step, l in enumerate(dl): 
-                    Importt[l, donors[step, nd]] += _transmission[d]
-                    Exportt[l, donors[step+1, nd]] -= _transmission[d]
-            Fillt[n] -= _transmission.sum()
-            Surplust -= _transmission                
-            
-        if Surplust.sum() == 0 or Fillt.sum() == 0:
-            break
-                
-    return Importt+Exportt
-
-
-@njit
-def hvdc_even(Fillt, Surplust, Hcapacity, network, networksteps, Transmissiont):
-    raise NotImplementedError
-    maxconnections = network.shape[-1]
-
-    for leg in range(networksteps):
-        Fillmask = Fillt > 1e-6
-        donors = network[:, Fillmask, perfect[leg]:perfect[leg+1], :]
-        donors, donor_lines = donors[0,:,:,:], donors[1,:,:,:]
-    
-        valid_mask = donors[:, -1, :] != -1
-        
-        donors = np.hstack((np.repeat(np.arange(len(Fillt)), maxconnections).reshape(len(Fillt), 1, maxconnections)[Fillmask], donors))
-        donors = donors.transpose(1, 0, 2)
-        
-        _transmission = np.zeros(valid_mask.shape, np.float64)
-        valid_mask = (donors[-1, :, :] != -1).flatten()
-        
-        _transmission.ravel()[valid_mask] = Surplust[donors[-1].ravel()[valid_mask]]
-
-        CLine = Hcapacity - np.maximum(0, Transmissiont).sum(axis=1)
-
-        donor_lines = donor_lines.transpose(1, 0, 2)
-
-        for line in np.unique(donor_lines):
-            if line==-1:
-                continue
-            di = (donor_lines==line).sum(axis=0).astype(np.bool_).ravel()
-            if CLine[line] <= 1e-6: 
-                _transmission.ravel()[di] = 0
-                continue
-            _transmission.ravel()[di] /= max(1, _transmission.ravel()[di].sum() / CLine[line])
-        
-        # divzeromask = Fillt != 0 
-        # _transmission[divzeromask] /= np.maximum(1, _transmission.sum(axis=1)[divzeromask]/Fillt[divzeromask])
-        # _transmission[~divzeromask] = 0 
-        
-        _transmission /= np.atleast_2d(np.maximum(1, _transmission.sum(axis=1)/Fillt[Fillmask])).T
-
-        Fillt[Fillmask] -= _transmission.sum(axis=1)
-        
-        _trans_valid = _transmission.ravel()[valid_mask]
-        
-        Surplust[donors[-1].ravel()[valid_mask]] -= _trans_valid
-        
-        for l in range(leg+1):
-            for u, ind in enumerate(zip(donor_lines[l].ravel()[valid_mask], donors[l].ravel()[valid_mask])):
-                Transmissiont[*ind] += _trans_valid[u]
-            for u, ind in enumerate(zip(donor_lines[l].ravel()[valid_mask], donors[l+1].ravel()[valid_mask])):
-                Transmissiont[*ind] -= _trans_valid[u]
-        
-        if Fillt.sum() == 0:
-            break
-        
-    return Transmissiont
 
         
     

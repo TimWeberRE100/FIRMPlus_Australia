@@ -373,7 +373,8 @@ class Solution:
     #     return 'Solution({})'.format(self.x)
 
 if __name__=='__main__':
-    x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
+    x = (ub-lb)*np.random.rand(len(lb))
+    # x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
     solution = Solution(x)#/1.25) 
     
     def test():

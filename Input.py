@@ -34,6 +34,7 @@ resolution = 0.5
 firstyear, finalyear, timestep = (2020, 2029, 1)
 
 MLoad = np.genfromtxt('Data/electricity.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(Nodel))) # EOLoad(t, j), MW
+MLoad /= 1000 # MW/GW
 
 TSPV = np.genfromtxt('Data/pv.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(PVl))) # TSPV(t, i), MW
 TSWind = np.genfromtxt('Data/wind.csv', delimiter=',', skip_header=1, usecols=range(4, 4+len(Windl))) # TSWind(t, i), MW
@@ -199,6 +200,7 @@ elif scenario>=21:
     
         
 intervals, nodes = MLoad.shape
+nhvdc = network_mask.sum()
 years = int(resolution * intervals / 8760)
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
 pidx, widx = pzones, pzones + wzones
@@ -207,25 +209,29 @@ spidx, seidx = pzones + wzones + nodes, pzones + wzones + nodes + nodes
 energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
-GBaseload = np.tile(CBaseload, (intervals, 1)) * pow(10, 3) # GW to MW
+GBaseload = np.tile(CBaseload, (intervals, 1)) # GW 
 
-lb = np.array([0.]  * pzones + [0.]   * wzones + contingency   + [0.] * nodes   + [0.] * len(networks[0]))
-ub = np.array([50.] * pzones + [50.]  * wzones + [50.] * nodes + [500.] * nodes + list(np.array(CDCmax)[network_mask]))
+lb = np.array([0.]  * pzones + [0.]   * wzones + [0.] * nodes  + [0.] * nodes   + [0.] * nhvdc)
+ub = np.array([32.] * pzones + [32.]  * wzones + [32.] * nodes + [500.] * nodes + [100.]* nhvdc)
+              # list(np.array(CDCmax)[network_mask]))
+
+
+x0 = np.concatenate((
+    np.repeat(MLoad.sum()/intervals*0.6 / len(PVl) / 0.25, len(PVl)), 
+    np.repeat(MLoad.sum()/intervals*0.6 / len(Windl) /0.5, len(Windl)), 
+    np.repeat(MLoad.max()*1.1/nodes, nodes), 
+    np.repeat(MLoad.max()*1.1/nodes*50, nodes), 
+    np.repeat(MLoad.max()/4, nhvdc)))
 
 #%%
-from Simulation import Reliability
+# from Simulation import Simulate
+from Fill import Fill
 
 @njit()
 def F(S):
-    assert S.vectorised is False
+    Hydro = (S.GBaseload.sum() + Fill(S).sum())*resolution/years
     
-    Deficit = Reliability(S, flexible=np.zeros((intervals, nodes) , dtype=np.float64)) # Sj-EDE(t, j), MW
-    Flexible = Deficit.sum() * resolution / years / efficiency # MWh p.a.
-    Hydro = Flexible + GBaseload.sum() * resolution / years # Hydropower & biomass: MWh p.a.
-    PenHydro = np.maximum(0, Hydro - 20 * 1000000) # TWh p.a. to MWh p.a.
-
-    Deficit = Reliability(S, flexible=np.ones((intervals, nodes), dtype=np.float64)*CPeak*1000) # Sj-EDE(t, j), GW to MW
-    PenDeficit = np.maximum(0, Deficit.sum() * resolution) # MWh
+    PenDeficit = np.maximum(0, S.Deficit.sum()) # GWh*2
 
     CHVDC = np.zeros(len(network_mask), dtype=np.float64)
     CHVDC[network_mask] = S.CHVDC
@@ -240,7 +246,7 @@ def F(S):
     loss = loss.sum() * 0.000000001 * resolution / years # PWh p.a.
     LCOE = cost / np.abs(energy - loss)
     
-    return LCOE, (PenHydro+PenDeficit)
+    return LCOE, PenDeficit
 
 # Specify the types for jitclass
 solution_spec = [
@@ -249,6 +255,7 @@ solution_spec = [
     ('MLoad', float64[:, :]),  # 2D array of floats
     ('intervals', int64),
     ('nodes', int64),
+    ('nhvdc', int64),
     ('resolution',float64),
     ('CPV', float64[:]), # 1D array of floats
     ('CWind', float64[:]), # 1D array of floats
@@ -258,6 +265,7 @@ solution_spec = [
     ('CPHS', float64[:]),
     ('CHVDC', float64[:]),
     ('efficiency', float64),
+    ('Flex_res', float64),
     # ('Nodel_int', int64[:]), 
     # ('PVl_int', int64[:]),
     # ('Windl_int', int64[:]),
@@ -317,8 +325,10 @@ class Solution:
         
         self.x = x
         self.nvec = 1
-        
+
+        self.Flex_res = 20000 /resolution*years
         self.intervals, self.nodes = intervals, nodes
+        self.nhvdc = network_mask.sum()
         self.resolution = resolution
         self.network, self.directconns = network, directconns
         self.trans_tdc_mask = trans_tdc_mask
@@ -331,17 +341,16 @@ class Solution:
         self.CWind = x[pidx: widx]  # CWind(i), GW
         
         # Manually replicating np.tile functionality for CPV and CWind
-        CPV_tiled = np.zeros((intervals, len(self.CPV)))
-        CWind_tiled = np.zeros((intervals, len(self.CWind)))
-        # CInter_tiled = np.zeros((intervals, len(self.CWind)))
+        GPV = np.zeros((intervals, len(self.CPV)))
+        GWind = np.zeros((intervals, len(self.CWind)))
         for i in range(intervals):
             for j in range(len(self.CPV)):
-                CPV_tiled[i, j] = self.CPV[j]
+                GPV[i, j] = self.CPV[j]
             for j in range(len(self.CWind)):
-                CWind_tiled[i, j] = self.CWind[j]
+                GWind[i, j] = self.CWind[j]
 
-        GPV = TSPV * CPV_tiled * 1000.  # GPV(i, t), GW to MW
-        GWind = TSWind * CWind_tiled * 1000.  # GWind(i, t), GW to MW
+        GPV = TSPV * GPV   # GPV(i, t), GW 
+        GWind = TSWind * GWind   # GWind(i, t), GW 
         
         self.GPV, self.GWind = np.empty((intervals, nodes), np.float64), np.empty((intervals, nodes), np.float64)
         for i, j in enumerate(Nodel_int):

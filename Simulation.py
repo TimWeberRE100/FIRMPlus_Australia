@@ -14,7 +14,7 @@ perfect = np.array([0,1,3,6,10,15,21])
 
 
 @njit
-def Reliability(solution, flexible, start=None, end=None):
+def Simulate(solution, flexible, transmission=True):
     """ 
     flexible = np.ones((intervals, nodes))*CPeak*1000; end=None; start=None 
     """
@@ -22,87 +22,60 @@ def Reliability(solution, flexible, start=None, end=None):
     trans_tdc_mask = solution.trans_tdc_mask
     networksteps = np.where(perfect == network.shape[2])[0][0]
     
-    Netload = (solution.MLoad - solution.GPV - solution.GWind - solution.GBaseload)[start:end]
+    Netload = (solution.MLoad - solution.GPV - solution.GWind - solution.GBaseload)
     Netload -= flexible
     
-    shape2d = intervals, nodes = len(Netload), solution.nodes
 
-    Pcapacity = solution.CPHP * 1000 # S-CPHP(j), GW to MW
-    Scapacity = solution.CPHS * 1000 # S-CPHS(j), GWh to MWh
-    Hcapacity = solution.CHVDC * 1000 # GW to MW
-    nhvdc = len(solution.CHVDC)
-    efficiency, resolution = solution.efficiency, solution.resolution 
+    Discharge = np.zeros((solution.intervals, solution.nodes), dtype=np.float64)
+    Charge = np.zeros((solution.intervals, solution.nodes), dtype=np.float64)
+    Storage = np.zeros((solution.intervals, solution.nodes), dtype=np.float64)
+    Deficit = np.zeros((solution.intervals, solution.nodes), dtype=np.float64)
+    Transmission = np.zeros((solution.intervals, solution.nhvdc, solution.nodes), dtype = np.float64)
 
-    Discharge = np.zeros(shape2d, dtype=np.float64)
-    Charge = np.zeros(shape2d, dtype=np.float64)
-    Storage = np.zeros(shape2d, dtype=np.float64)
-    Deficit = np.zeros(shape2d, dtype=np.float64)
-    Transmission = np.zeros((intervals, nhvdc, nodes), dtype = np.float64)
+    Storage[-1] = 0.5*solution.CPHS
 
-    Storaget_1 = 0.5*Scapacity
-
-    for t in range(intervals):
+    for t in range(solution.intervals):
         Netloadt = Netload[t]
 
-        Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-        Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
-        Deficitt = np.maximum(Netloadt - Discharget ,0)
+        Charge[t] = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), solution.CPHP), (solution.CPHS - Storage[t-1]) / solution.efficiency / solution.resolution)
+        Discharge[t] = np.minimum(np.minimum(np.maximum(0, Netloadt), solution.CPHP), Storage[t-1] / solution.resolution)
+        Deficitt = np.maximum(Netloadt - Discharge[t] ,0)
 
-        Transmissiont=np.zeros((nhvdc, nodes), dtype=np.float64)
-        
-        # # The following provides a relatively minor benefit to cost for increased computation time
-        # if Deficitt.sum() > 1e-6:
-        #     # Fill deficits with transmission without drawing down from battery reserves
-        #     Fillt = np.maximum(Netloadt - Discharget, 0)
-        #     Surplust = -1 * np.minimum(0, Netloadt + Charget) 
-            
-        #     Transmissiont = hvdc(Fillt, Surplust, Transmissiont, Hcapacity, network, networksteps)
-            
-        #     Netloadt = Netload[t] - Transmissiont.sum(axis=0)
-        #     Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-        #     Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
-        #     Deficitt = np.maximum(Netloadt - Discharget, 0)
-    
-        if Deficitt.sum() > 1e-6:
+        if Deficitt.sum() > 1e-6 and transmission is True:
             # raise KeyboardInterrupt
             # Fill deficits with transmission allowing drawing down from neighbours battery reserves
-            Fillt = np.maximum(Netloadt - Discharget, 0)
-            Surplust = -1 * np.minimum(0, Netloadt + Charget) + np.minimum(Pcapacity, Storaget_1 / resolution)
+            Fillt = np.maximum(Netloadt - Discharge[t], 0)
+            Surplust = -1 * np.minimum(0, Netloadt + Charge[t]) + np.minimum(solution.CPHP, Storage[t-1] / solution.resolution)
 
-            Transmissiont = hvdc(Fillt, Surplust, Hcapacity, network, networksteps, 
-                                 np.maximum(0, Transmissiont), np.minimum(0, Transmissiont))
+            Transmission[t] = hvdc(Fillt, Surplust, solution.CHVDC, network, networksteps, 
+                                 np.maximum(0, Transmission[t]), np.minimum(0, Transmission[t]))
             
-            Netloadt = Netload[t] - Transmissiont.sum(axis=0)
-            Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-            Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
+            Netloadt = Netload[t] - Transmission[t].sum(axis=0)
+            Charge[t] = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), solution.CPHP), (solution.CPHS - Storage[t-1]) / solution.efficiency / solution.resolution)
+            Discharge[t] = np.minimum(np.minimum(np.maximum(0, Netloadt), solution.CPHP), Storage[t-1] / solution.resolution)
 
         # =============================================================================
         # TODO: If deficit Go back in time and discharge batteries 
         # This will be extemely computationally intensive
         # =============================================================================
         
-        Surplust = -1 * np.minimum(0, Netloadt + Charget) 
-        if Surplust.sum() > 1e-6:
+        Surplust = -1 * np.minimum(0, Netloadt + Charge[t]) 
+        if Surplust.sum() > 1e-6 and transmission is True:
             # raise KeyboardInterrupt
             # Distribute surplus energy with transmission to areas with spare charging capacity
             Fillt = (np.maximum(0, Netloadt) #load
-                        + np.minimum(Pcapacity, (Scapacity - Storaget_1) / efficiency / resolution) #full charging capacity
-                        - Charget) #charge capacity already in use
+                        + np.minimum(solution.CPHP, (solution.CPHS - Storage[t-1]) / solution.efficiency / solution.resolution) #full charging capacity
+                        - Charge[t]) #charge capacity already in use
 
-            Transmissiont = hvdc(Fillt, Surplust, Hcapacity, network, networksteps,
-                                 np.maximum(0, Transmissiont), np.minimum(0, Transmissiont))
+            Transmission[t] = hvdc(Fillt, Surplust, solution.CHVDC, network, networksteps,
+                                 np.maximum(0, Transmission[t]), np.minimum(0, Transmission[t]))
             
-            Netloadt = Netload[t] - Transmissiont.sum(axis=0)
-            Charget = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), Pcapacity), (Scapacity - Storaget_1) / efficiency / resolution)
-            Discharget = np.minimum(np.minimum(np.maximum(0, Netloadt), Pcapacity), Storaget_1 / resolution)
+            Netloadt = Netload[t] - Transmission[t].sum(axis=0)
+            Charge[t] = np.minimum(np.minimum(-1 * np.minimum(0, Netloadt), solution.CPHP), (solution.CPHS - Storage[t-1]) / solution.efficiency / solution.resolution)
+            Discharge[t] = np.minimum(np.minimum(np.maximum(0, Netloadt), solution.CPHP), Storage[t-1] / solution.resolution)
 
-        Storaget = Storaget_1 - Discharget * resolution + Charget * resolution * efficiency
-        Storaget_1 = Storaget.copy()
+        Storage[t] = Storage[t-1] - Discharge[t] * solution.resolution + Charge[t] * solution.resolution * solution.efficiency
         
-        Discharge[t] = Discharget
-        Charge[t] = Charget
-        Storage[t] = Storaget
-        Transmission[t] = Transmissiont
         
     ImpExp = Transmission.sum(axis=1)
     
@@ -118,9 +91,9 @@ def Reliability(solution, flexible, start=None, end=None):
     solution.Import = np.maximum(0, ImpExp)
     solution.Export = -1 * np.minimum(0, ImpExp)
     solution.TDC = (np.atleast_3d(trans_tdc_mask).T*Transmission).sum(axis=2)
+    solution.Netload = Netload
     
     return Deficit
-
 
         
     

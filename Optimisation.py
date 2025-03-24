@@ -51,6 +51,7 @@ def Optimise():
         updating='deferred', 
         callback=Callback_1 if args.cb == 1 else None,
         workers=args.w, 
+        x0=x0,
         )
     
     endtime = dt.datetime.now()

@@ -206,188 +206,167 @@ pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
 pidx, widx = pzones, pzones + wzones
 spidx, seidx = pzones + wzones + nodes, pzones + wzones + nodes + nodes
 
-energy = MLoad.sum() * pow(10, -9) * resolution / years # PWh p.a.
+energy = MLoad.sum() * pow(10, -6) * resolution / years # TWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
-GBaseload = np.tile(CBaseload, (intervals, 1)) # GW 
 
 lb = np.array([0.]  * pzones + [0.]   * wzones + [0.] * nodes  + [0.] * nodes   + [0.] * nhvdc)
 ub = np.array([32.] * pzones + [32.]  * wzones + [32.] * nodes + [500.] * nodes + [100.]* nhvdc)
               # list(np.array(CDCmax)[network_mask]))
 
-
 x0 = np.concatenate((
-    np.repeat(MLoad.sum()/intervals*0.6 / len(PVl) / 0.25, len(PVl)), 
-    np.repeat(MLoad.sum()/intervals*0.6 / len(Windl) /0.5, len(Windl)), 
-    np.repeat(MLoad.max()*1.1/nodes, nodes), 
-    np.repeat(MLoad.max()*1.1/nodes*50, nodes), 
-    np.repeat(MLoad.max()/4, nhvdc)))
+    MLoad.sum()/intervals*0.75 / len(PVl) / TSPV.mean(axis=0), 
+    MLoad.sum()/intervals*0.75 / len(Windl) / TSWind.mean(axis=0), 
+    MLoad.max(axis=0)*1.1, 
+    MLoad.max(axis=0)*40, 
+    np.repeat(MLoad.max()*0.75, nhvdc)))
+x0 = np.minimum(ub, x0)
+
+triangulars = np.array([0,1,3,6,10,15,21,28], np.int64)
+
 
 #%%
-# from Simulation import Simulate
 from Fill import Fill
 
 @njit()
 def F(S):
-    Hydro = (S.GBaseload.sum() + Fill(S).sum())*resolution/years
+    #TODO redo cost model
+    Hydro = (S.CBaseload.sum()*intervals + Fill(S).sum())*resolution/years # GWh p.a.
     
-    PenDeficit = np.maximum(0, S.Deficit.sum()) # GWh*2
+    PenDeficit = np.maximum(0, S.MDeficit.sum()) # GWh*2
 
     CHVDC = np.zeros(len(network_mask), dtype=np.float64)
     CHVDC[network_mask] = S.CHVDC
 
-    _c = 0.0 if scenario <= 17 else -1.0
+    _c = 0.0 if scenario < 20 else -1.0
     cost = (factor * np.array([S.CPV.sum(), S.CWind.sum(), S.CPHP.sum(), S.CPHS.sum()] + list(CHVDC) +
                                [S.CPV.sum(), S.CWind.sum(), Hydro * 0.000001, _c, _c])
             ).sum()
 
     loss = np.zeros(len(network_mask), dtype=np.float64)
-    loss[network_mask] = S.TDC.sum(axis=0) * DCloss[network_mask]
-    loss = loss.sum() * 0.000000001 * resolution / years # PWh p.a.
+    loss[network_mask] = np.abs(S.TDC).sum(axis=0) * DCloss[network_mask]
+    loss = loss.sum() * 0.000001 * resolution / years # PWh p.a.
     LCOE = cost / np.abs(energy - loss)
     
     return LCOE, PenDeficit
 
 # Specify the types for jitclass
 solution_spec = [
-    ('x', float64[:]),  # x is 1d array
-    ('nvec', int64),
-    ('MLoad', float64[:, :]),  # 2D array of floats
+    ('x', float64[:]),
     ('intervals', int64),
     ('nodes', int64),
     ('nhvdc', int64),
     ('resolution',float64),
-    ('CPV', float64[:]), # 1D array of floats
-    ('CWind', float64[:]), # 1D array of floats
-    ('GPV', float64[:, :]),  # 2D array of floats
-    ('GWind', float64[:, :]),  # 2D array of floats
-    ('CPHP', float64[:]),
-    ('CPHS', float64[:]),
-    ('CHVDC', float64[:]),
     ('efficiency', float64),
     ('Flex_res', float64),
     # ('Nodel_int', int64[:]), 
     # ('PVl_int', int64[:]),
     # ('Windl_int', int64[:]),
-    ('GBaseload', float64[:, :]),  # 2D array of floats
-    ('CPeak', float64[:]),  # 1D array of floats
-    ('CHydro', float64[:]),  # 1D array of floats
-    ('flexible', float64[:,:]),
-    ('Discharge', float64[:,:]),
-    ('Charge', float64[:,:]),
-    ('Storage', float64[:,:]),
-    ('Deficit', float64[:,:]),
-    ('Spillage', float64[:,:]),
-    ('Netload' ,float64[:,:]),
-    ('Import', float64[:, :]),
-    ('Export', float64[:, :]),
-    ('Penalties', float64),
-    ('Lcoe', float64),
-    ('evaluated', boolean),
-    ('vectorised',boolean),
-    ('MPV', float64[:, :]),
-    ('MWind', float64[:, :]),
-    ('MBaseload', float64[:, :]),
-    ('MPeak', float64[:, :]),
+    ('networksteps', int64),
+    ('network', int64[:, :, :, :]),
+    ('directconns', int64[:,:]),
+
+    # Capacities in GW/GWh
+    ('CPV', float64[:]),
+    ('CWind', float64[:]),
+    ('CPHP', float64[:]),
+    ('CPHS', float64[:]),
+    ('CHVDC', float64[:]),
+    ('CBaseload', float64[:]),
+    ('CPeak', float64[:]),
+    ('CHydro', float64[:]),
+
+    # Nodally diaggregated operations in GW/GWh
+    ('MFlexible', float64[:,:]),
     ('MDischarge', float64[:, :]),
     ('MCharge', float64[:, :]),
     ('MStorage', float64[:, :]),
     ('MDeficit', float64[:, :]),
     ('MSpillage', float64[:, :]),
+    ('MNetload' ,float64[:, :]),
+    ('MImport', float64[:, :]),
+    ('MExport', float64[:, :]),
+    ('MPV', float64[:, :]),
+    ('MWind', float64[:, :]),
+    ('MLoad', float64[:, :]),
+    ('MBaseload', float64[:, :]),
     ('MHydro', float64[:, :]),
     ('MBio', float64[:, :]),
-    ('CDP', float64[:]),
-    ('CDS', float64[:]),
+
+    # ('FQ', float64[:]),
+    # ('NQ', float64[:]),
+    # ('NS', float64[:]),
+    # ('NV', float64[:]),
+    # ('AS', float64[:]),
+    # ('SW', float64[:]),
+    # ('TV', float64[:]),
     ('TDC', float64[:, :]),
-    ('CDC', float64[:]),
-    ('FQ', float64[:]),
-    ('NQ', float64[:]),
-    ('NS', float64[:]),
-    ('NV', float64[:]),
-    ('AS', float64[:]),
-    ('SW', float64[:]),
-    ('TV', float64[:]),
     ('Topology', float64[:, :]),
-    ('network', int64[:, :, :, :]),
-    ('directconns', int64[:,:]),
     ('trans_tdc_mask', boolean[:,:]),
+    ('TImport', float64[:,:,:]),
+    ('TExport', float64[:,:,:]),
+
+    
+    ('Penalties', float64),
+    ('Lcoe', float64),
+
 
 ]
 
 @jitclass(solution_spec)
 class Solution:
     #A candidate solution of decision variables CPV(i), CWind(i), CPHP(j), S-CPHS(j)
-    
     def __init__(self, x):
-        # input vector should have shape (sidx+1, n) i.e. vertical input vectors
-        self.vectorised=False
         assert len(x) == len(lb)
         
         self.x = x
-        self.nvec = 1
 
         self.Flex_res = 20000 /resolution*years
         self.intervals, self.nodes = intervals, nodes
         self.nhvdc = network_mask.sum()
-        self.resolution = resolution
+        self.resolution, self.efficiency = resolution, efficiency
         self.network, self.directconns = network, directconns
+        self.networksteps = np.where(triangulars == network.shape[2])[0][0]
+
+        # self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
+
         self.trans_tdc_mask = trans_tdc_mask
-        
-        # self.network2, self.network3, self.network4 = network2, network3, network4
        
         self.MLoad = MLoad
 
         self.CPV = x[: pidx]  # CPV(i), GW
         self.CWind = x[pidx: widx]  # CWind(i), GW
-        
-        # Manually replicating np.tile functionality for CPV and CWind
-        GPV = np.zeros((intervals, len(self.CPV)))
-        GWind = np.zeros((intervals, len(self.CWind)))
-        for i in range(intervals):
-            for j in range(len(self.CPV)):
-                GPV[i, j] = self.CPV[j]
-            for j in range(len(self.CWind)):
-                GWind[i, j] = self.CWind[j]
-
-        GPV = TSPV * GPV   # GPV(i, t), GW 
-        GWind = TSWind * GWind   # GWind(i, t), GW 
-        
-        self.GPV, self.GWind = np.empty((intervals, nodes), np.float64), np.empty((intervals, nodes), np.float64)
-        for i, j in enumerate(Nodel_int):
-            self.GPV[:,i] = GPV[:, PVl_int==j].sum(axis=1)
-            self.GWind[:,i] = GWind[:, Windl_int==j].sum(axis=1) 
+            
+        self.MPV, self.MWind = np.zeros((intervals, nodes)), np.zeros((intervals, nodes))
+        for i, n in enumerate(Nodel_int):
+            self.MPV[:, i] += (TSPV[:, PVl_int==n] * self.CPV[PVl_int==n]).sum(axis=1)
+            self.MWind[:, i] += (TSWind[:, Windl_int==n] * self.CWind[Windl_int==n]).sum(axis=1)
             
         self.CPHP = x[widx: spidx]  # CPHP(j), GW
         self.CPHS = x[spidx: seidx]  # S-CPHS(j), GWh
         self.CHVDC = x[seidx:]
-        
-        self.efficiency = efficiency
-
-        # self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
-        
-
-        self.GBaseload = GBaseload
+        self.CBaseload = CBaseload
         self.CPeak = CPeak
         self.CHydro = CHydro
         
-        self.evaluated=False
-        
     def _evaluate(self):
         self.Lcoe, self.Penalties = F(self)
-        self.evaluated=True
-
 
     # def __repr__(self):
     #     """S = Solution(list(np.ones(64))) >> print(S)"""
     #     return 'Solution({})'.format(self.x)
 
 if __name__=='__main__':
-    x = (ub-lb)*np.random.rand(len(lb))
     # x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
-    solution = Solution(x)#/1.25) 
+    solution = Solution(x0)
+    solution._evaluate()
+    print(solution.Lcoe, solution.Penalties)
     
-    def test():
-        solution = Solution(x)#/1.25) 
+    @njit
+    def test(disp=False):
+        x = (ub-lb)*np.random.rand(len(lb))
+        solution = Solution(x)
         solution._evaluate()
-        print(solution.Lcoe, solution.Penalties)
+        if disp:
+            print(solution.Lcoe, solution.Penalties)
     test()

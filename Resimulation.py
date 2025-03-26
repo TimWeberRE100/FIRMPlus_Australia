@@ -11,8 +11,6 @@ from numba import njit
 
 from Interconnection import hvdc
 
-perfect = np.array([0,1,3,6,10,15,21])
-
 from Simulation import Simulate
 
 
@@ -21,84 +19,93 @@ def Resimulate(solution, flexible):
     """ 
     flexible = np.ones((intervals, nodes))*CPeak*1000; end=None; start=None 
     """
-    network = solution.network
-    trans_tdc_mask = solution.trans_tdc_mask
-    networksteps = np.where(perfect == network.shape[2])[0][0]
+    # Get first approximation without transmission
+    Simulate(solution, flexible)
     
-    Simulate(solution, flexible, False)
+    # These hold a matrix of import and export by node and line for each time
+    solution.TImport = np.zeros((solution.intervals, solution.nhvdc, solution.nodes), dtype = np.float64)
+    solution.TExport = np.zeros((solution.intervals, solution.nhvdc, solution.nodes), dtype = np.float64)
     
-    Transmission = np.zeros((solution.intervals, solution.nhvdc, solution.nodes), dtype = np.float64)
-    
-    fill = np.zeros(solution.nodes, np.float64)
+    fill = np.zeros(solution.nodes, np.float64) # Deficit accumulator
     for t in range(solution.intervals-1, -1, -1):
-        if solution.Deficit[t].sum() > 1e-6:
+        # If there is a deficit try to fill with transmission
+        if solution.MDeficit[t].sum() > 1e-6:
+            # Surplus is spillage + charging - dischargeable storage - discharging 
             Surplus = np.maximum(0, 
-                solution.Spillage[t] + solution.Charge[t] + 
-                np.minimum(solution.CPHP, solution.Storage[t-1] / solution.resolution) - solution.Discharge[t]
+                solution.MSpillage[t] + solution.MCharge[t] + 
+                np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution) - solution.MDischarge[t]
                 )
             
+            # If no surplus, no need to waste time here
             if Surplus.sum() > 1e-6: 
-                Transmission[t] = hvdc(solution.Deficit[t], Surplus, solution.CHVDC, network, networksteps, 
-                                     np.maximum(0, Transmission[t]), np.minimum(0, Transmission[t]))
+                # Calculate transmission flows (in-place)
+                hvdc(solution, solution.MDeficit[t], Surplus, solution.TImport[t], solution.TExport[t])
                 
-                solution.Charge[t] = np.minimum(
+                # Recalculate charging behaviour as normal but adjusting netload for import/export
+                solution.MCharge[t] = np.minimum(
                     np.minimum(
-                        - np.minimum(0, solution.Netload[t] - Transmission[t].sum(axis=0)), 
+                        - np.minimum(0, solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0)), 
                         solution.CPHP), 
-                    (solution.CPHS - solution.Storage[t-1]) / solution.efficiency / solution.resolution
+                    (solution.CPHS - solution.MStorage[t-1]) / solution.efficiency / solution.resolution
                     )
-                solution.Discharge[t] = np.minimum(
+                solution.MDischarge[t] = np.minimum(
                     np.minimum(
-                        np.maximum(0,solution.Netload[t] - Transmission[t].sum(axis=0)), 
+                        np.maximum(0,solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0)), 
                         solution.CPHP), 
-                    solution.Storage[t-1] / solution.resolution
+                    solution.MStorage[t-1] / solution.resolution
                     )
-                solution.Spillage[t] = -np.minimum(0, solution.Netload[t] - Transmission[t].sum(axis=0) + solution.Charge[t])            
-            
-            if solution.Deficit[t].sum() > 1e-6:
-                fill += solution.Deficit[t] / solution.efficiency 
+                # Recalculate spillage 
+                solution.MSpillage[t] = -np.minimum(0, solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0) + solution.MCharge[t])            
+                # Deficit does not need to be recalculated as hvdc() is in-place
                 
+            # accumulate deficit + charging inefficiency
+            if solution.MDeficit[t].sum() > 1e-6:
+                fill += solution.MDeficit[t] / solution.efficiency 
+                
+        # Fill accumulated deficits
         if fill.sum() > 1e-6:
-            #TODO: add simplified charging model to cap a node importing when storage is full as in Fill
-            fill = np.minimum(fill, (solution.CPHS - solution.Storage[t-1])/solution.resolution/solution.efficiency)
-
+            # Cap accumulator if storage full 
+            #TODO: improve charging model to cap a node importing when storage is full as in Fill
+            fill = np.minimum(fill, (solution.CPHS - solution.MStorage[t-1])/solution.resolution/solution.efficiency)
+            
+            # Surplus is spillage + charging - dischargeable storage - discharging 
             Surplus = np.maximum(0, 
-                solution.Spillage[t] + solution.Charge[t] + 
-                np.minimum(solution.CPHP, solution.Storage[t-1] / solution.resolution) - solution.Discharge[t]
+                solution.MSpillage[t] + solution.MCharge[t] + 
+                np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution) - solution.MDischarge[t]
                 )
             
+            # If no surplus, no need to waste time here
             if Surplus.sum() > 1e-6: 
-                Transmission[t] = hvdc(fill, Surplus, solution.CHVDC, network, networksteps, 
-                                     np.maximum(0, Transmission[t]), np.minimum(0, Transmission[t]))
+                # Calculate transmission flows (in-place)
+                hvdc(solution, fill, Surplus, solution.TImport[t], solution.TExport[t])
                 
-                solution.Charge[t] = np.minimum(
+                # Recalculate charging behaviour as normal but adjusting netload for import/export
+                solution.MCharge[t] = np.minimum(
                     np.minimum(
-                        - np.minimum(0, solution.Netload[t] - Transmission[t].sum(axis=0)), 
+                        - np.minimum(0, solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0)), 
                         solution.CPHP), 
-                    (solution.CPHS - solution.Storage[t-1]) / solution.efficiency / solution.resolution
+                    (solution.CPHS - solution.MStorage[t-1]) / solution.efficiency / solution.resolution
                     )
-                solution.Discharge[t] = np.minimum(
+                solution.MDischarge[t] = np.minimum(
                     np.minimum(
-                        np.maximum(0,solution.Netload[t] - Transmission[t].sum(axis=0)), 
+                        np.maximum(0,solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0)), 
                         solution.CPHP), 
-                    solution.Storage[t-1] / solution.resolution
+                    solution.MStorage[t-1] / solution.resolution
                     )
-                solution.Spillage[t] = -np.minimum(0, solution.Netload[t] - Transmission[t].sum(axis=0) + solution.Charge[t])
-        
-        solution.Storage[t] = solution.Storage[t-1] - solution.resolution * (solution.Discharge[t]
-                               + solution.Charge[t] * solution.efficiency)
+                # Recalculate spillage 
+                solution.MSpillage[t] = -np.minimum(0, solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0) + solution.MCharge[t])
+                # fill does not need to be updated as hvdc() is in-place
 
-    ImpExp = Transmission.sum(axis=1)
-    
+        # Update SOC 
+        solution.MStorage[t] = solution.MStorage[t-1] + solution.resolution * (solution.MCharge[t] * solution.efficiency - solution.MDischarge[t])
+
     # Already calcualted in for loop above
-    # solution.Deficit = np.maximum(0, solution.Netload - ImpExp - solution.Discharge)
-    # solution.Spillage = -1 * np.minimum(0, solution.Netload - ImpExp + solution.Charge)
+    # solution.MDeficit = np.maximum(0, solution.MNetload - ImpExp - solution.MDischarge)
+    # solution.MSpillage = -1 * np.minimum(0, solution.MNetload - ImpExp + solution.MCharge)
     
-    solution.Import = np.maximum(0, ImpExp)
-    solution.Export = -1 * np.minimum(0, ImpExp)
-    solution.TDC = (np.atleast_3d(trans_tdc_mask).T*Transmission).sum(axis=2)
+    solution.TDC = (np.atleast_3d(solution.trans_tdc_mask).T*(solution.TImport + solution.TExport)).sum(axis=2)
 
-    return solution.Deficit
+    return solution.MDeficit
 
             
                 

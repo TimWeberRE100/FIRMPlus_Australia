@@ -20,7 +20,6 @@ def Debug(solution):
     Discharge, Charge, Storage = (solution.Discharge, solution.Charge, solution.Storage)
     Deficit, Spillage = (solution.Deficit, solution.Spillage)
 
-    PHS, DS = solution.CPHS * pow(10, 3), sum(solution.CDS) * pow(10, 3) # GWh to MWh
     efficiency = solution.efficiency
 
     for i in range(intervals):
@@ -30,7 +29,7 @@ def Debug(solution):
 
         # Discharge, Charge and Storage
         if i==0:
-            assert abs(Storage[i] - 0.5 * PHS + Discharge[i] * resolution - Charge[i] * resolution * efficiency) <= 1
+            assert abs(Storage[i] - 0.5 *  solution.CPHS  + Discharge[i] * resolution - Charge[i] * resolution * efficiency) <= 1
         else:
             assert abs(Storage[i] - Storage[i - 1] + Discharge[i] * resolution - Charge[i] * resolution * efficiency) <= 1
 

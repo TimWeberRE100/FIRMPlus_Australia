@@ -259,10 +259,11 @@ solution_spec = [
     ('resolution',float64),
     ('efficiency', float64),
     ('Flex_res', float64),
-    # ('Nodel_int', int64[:]), 
+    ('Nodel_int', int64[:]), 
     # ('PVl_int', int64[:]),
     # ('Windl_int', int64[:]),
     ('networksteps', int64),
+    ('network_mask', boolean[:]),
     ('network', int64[:, :, :, :]),
     ('directconns', int64[:,:]),
 
@@ -328,7 +329,8 @@ class Solution:
         self.network, self.directconns = network, directconns
         self.networksteps = np.where(triangulars == network.shape[2])[0][0]
 
-        # self.Nodel_int, self.PVl_int, self.Windl_int = Nodel_int, PVl_int, Windl_int
+        self.Nodel_int = Nodel_int
+        # self.PVl_int, self.Windl_int = PVl_int, Windl_int
 
         self.trans_tdc_mask = trans_tdc_mask
        

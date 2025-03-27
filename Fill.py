@@ -26,7 +26,9 @@ def Fill(solution):
         if fill.sum() > 1e-6:
             # # simplified charging model
             fill = np.minimum(fill, (solution.CPHS - solution.MStorage[t-1])/solution.resolution/solution.efficiency)
-            flex = np.minimum(fill, solution.CPeak - flexible[t], solution.CPHP - solution.MCharge[t] + solution.MDischarge[t])
+            flex = np.minimum(np.minimum(fill, 
+                              solution.CPeak - flexible[t]),
+                              solution.CPHP - solution.MCharge[t] + solution.MDischarge[t])
             if fill.sum() - flex.sum() > 1e-6:
                 _import, _export = solution.TImport[t].copy(), solution.TExport[t].copy()
                 hvdc(solution, solution.MDeficit[t], solution.CPeak - flexible[t] - flex, 

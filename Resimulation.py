@@ -17,23 +17,26 @@ from Simulation import Simulate
 @njit
 def Resimulate(solution, flexible):
     """ 
-    flexible = np.ones((intervals, nodes))*CPeak*1000; end=None; start=None 
+    flexible = np.ones((intervals, nodes))*CPeak*1000
+    flexible = np.zeros((intervals, nodes))
     """
-    # Get first approximation without transmission
-    Simulate(solution, flexible)
-    
     # These hold a matrix of import and export by node and line for each time
     solution.TImport = np.zeros((solution.intervals, solution.nhvdc, solution.nodes), dtype = np.float64)
     solution.TExport = np.zeros((solution.intervals, solution.nhvdc, solution.nodes), dtype = np.float64)
     
+    # Get first approximation without transmission
+    Simulate(solution, flexible)
+    
     fill = np.zeros(solution.nodes, np.float64) # Deficit accumulator
+    storage_adjuster = np.zeros(solution.nodes, np.float64)
+    
     for t in range(solution.intervals-1, -1, -1):
         # If there is a deficit try to fill with transmission
         if solution.MDeficit[t].sum() > 1e-6:
             # Surplus is spillage + charging - dischargeable storage - discharging 
             Surplus = np.maximum(0, 
                 solution.MSpillage[t] + solution.MCharge[t] + 
-                np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution) - solution.MDischarge[t]
+                np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution - storage_adjuster) - solution.MDischarge[t]
                 )
             
             # If no surplus, no need to waste time here
@@ -71,7 +74,8 @@ def Resimulate(solution, flexible):
             # Surplus is spillage + charging - dischargeable storage - discharging 
             Surplus = np.maximum(0, 
                 solution.MSpillage[t] + solution.MCharge[t] + 
-                np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution) - solution.MDischarge[t]
+                np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution - storage_adjuster) - solution.MDischarge[t]
+                
                 )
             
             # If no surplus, no need to waste time here
@@ -95,13 +99,14 @@ def Resimulate(solution, flexible):
                 # Recalculate spillage 
                 solution.MSpillage[t] = -np.minimum(0, solution.MNetload[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0) + solution.MCharge[t])
                 # fill does not need to be updated as hvdc() is in-place
-
+            
         # Update SOC 
-        solution.MStorage[t] = solution.MStorage[t-1] + solution.resolution * (solution.MCharge[t] * solution.efficiency - solution.MDischarge[t])
+        MStorage = solution.MStorage[t-1] + solution.resolution * (solution.MCharge[t] * solution.efficiency - solution.MDischarge[t])
+        storage_adjuster += MStorage - solution.MStorage[t] 
+        solution.MStorage[t-1] += storage_adjuster 
 
-    # Already calcualted in for loop above
-    # solution.MDeficit = np.maximum(0, solution.MNetload - ImpExp - solution.MDischarge)
-    # solution.MSpillage = -1 * np.minimum(0, solution.MNetload - ImpExp + solution.MCharge)
+        
+    Simulate(solution, flexible)
     
     solution.TDC = (np.atleast_3d(solution.trans_tdc_mask).T*(solution.TImport + solution.TExport)).sum(axis=2)
 

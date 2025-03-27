@@ -14,39 +14,34 @@ import datetime as dt
 def Debug(solution):
     """Debugging"""
 
-    Load, PV, Wind = (solution.MLoad.sum(axis=1), solution.GPV.sum(axis=1), solution.GWind.sum(axis=1))
-    Baseload, Peak = (solution.MBaseload.sum(axis=1), solution.MPeak.sum(axis=1))
-
-    Discharge, Charge, Storage = (solution.Discharge, solution.Charge, solution.Storage)
-    Deficit, Spillage = (solution.Deficit, solution.Spillage)
-
-    efficiency = solution.efficiency
-
-    for i in range(intervals):
+    for t in range(solution.intervals):
+        
         # Energy supply-demand balance
-        assert abs(Load[i] + Charge[i] + Spillage[i]
-                   - PV[i] - Wind[i] - Baseload[i] - Peak[i] - Discharge[i] - Deficit[i]) <= 1
+        assert (np.abs(solution.MLoad[t] + solution.MCharge[t] + solution.MSpillage[t]
+                      - solution.MPV[t] - solution.MWind[t] - solution.CBaseload
+                      - solution.MFlexible[t] - solution.MDischarge[t] 
+                      - solution.MDeficit[t] - (solution.TImport[t] + solution.TExport[t]).sum(axis=0)) < 0.001).all(), f"Energy Balance, {t}"
 
         # Discharge, Charge and Storage
-        if i==0:
-            assert abs(Storage[i] - 0.5 *  solution.CPHS  + Discharge[i] * resolution - Charge[i] * resolution * efficiency) <= 1
+        if t==0:
+            assert (np.abs(solution.MStorage[t] - 0.5 * solution.CPHS + solution.resolution * (
+                solution.MDischarge[t] - solution.MCharge[t] * solution.efficiency)) <= 0.001).all(), f"Phes behaviour, {t}"
         else:
-            assert abs(Storage[i] - Storage[i - 1] + Discharge[i] * resolution - Charge[i] * resolution * efficiency) <= 1
+            assert (np.abs(solution.MStorage[t] - solution.MStorage[t-1] + solution.resolution * (
+                solution.MDischarge[t] - solution.MCharge[t] * solution.efficiency)) <= 0.001).all(), f"Phes behaviour, {t}"
 
-        # Capacity: PV, wind, Discharge, Charge and Storage
-        try:
-            assert np.amax(PV) <= sum(solution.CPV) * pow(10, 3), print(np.amax(PV) - sum(solution.CPV) * pow(10, 3))
-            assert np.amax(Wind) <= sum(solution.CWind) * pow(10, 3), print(np.amax(Wind) - sum(solution.CWind) * pow(10, 3))
+    assert solution.MPV.sum(axis=1).max() <= solution.CPV.sum()
+    assert solution.MWind.sum(axis=1).max() <= solution.CWind.sum()
 
-            assert np.amax(Discharge) <= sum(solution.CPHP) * pow(10, 3), print(np.amax(Discharge) - sum(solution.CPHP) * pow(10, 3))
-            assert np.amax(Charge) <= sum(solution.CPHP) * pow(10, 3), print(np.amax(Charge) - sum(solution.CPHP) * pow(10, 3))
-            assert np.amax(Storage) <= solution.CPHS * pow(10, 3), print(np.amax(Storage) - solution.CPHS * pow(10, 3))
-        except AssertionError:
-            pass
+    assert (solution.MDischarge.max(axis=0) - solution.CPHP <= 0.001).all(), "Phes Discharge"
+    assert (solution.MCharge.max(axis=0)    - solution.CPHP <= 0.001).all(), "Phes Charge"
+    assert (solution.MStorage.max(axis=0)   - solution.CPHS <= 0.001).all(), "Phes SOC, too much"
+    assert (solution.MStorage.min(axis=0) >= -0.001).all(), "Phes SOC, negative"
 
     print('Debugging: everything is ok')
 
     return True
+
 
 def LPGM(solution):
     """Load profiles and generation mix data"""

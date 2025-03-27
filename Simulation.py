@@ -15,7 +15,8 @@ def Simulate(solution, flexible):
     flexible = np.ones((intervals, nodes))*CPeak*1000; end=None; start=None 
     """
     
-    solution.MNetload = solution.MLoad - solution.MPV - solution.MWind - solution.CBaseload - flexible
+    solution.MNetload = (solution.MLoad - solution.MPV - solution.MWind - solution.CBaseload - flexible 
+                         - (solution.TImport + solution.TExport).sum(axis=1))
 
     solution.MDischarge = np.zeros((solution.intervals, solution.nodes), dtype=np.float64)
     solution.MCharge = np.zeros((solution.intervals, solution.nodes), dtype=np.float64)

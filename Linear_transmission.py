@@ -9,7 +9,7 @@ It is used to verify that Fill.py works as intended
 from datetime import datetime as dt
 import numpy as np
 import pyomo.environ as pyo
-import cplex
+# import cplex
 
 
 
@@ -98,7 +98,7 @@ def build_model(solution):
 def optimise_model(model):
     start=dt.now()
     print("Optimising. Start:",start)
-    optimiser = pyo.SolverFactory('cplex')
+    optimiser = pyo.SolverFactory('gurobi')
     optimiser.solve(model)
     end=dt.now()
     print("Optimisation took:", end-start)
@@ -109,5 +109,5 @@ if __name__ == '__main__':
     
     solution = Solution(x0)
     model = build_model(solution)
-    model = optimise_model
+    model = optimise_model(model)
     

@@ -33,6 +33,13 @@ def Debug(solution):
     assert solution.MPV.sum(axis=1).max() <= solution.CPV.sum()
     assert solution.MWind.sum(axis=1).max() <= solution.CWind.sum()
 
+    assert (solution.TImport.max(axis=2) - solution.CHVDC <= 0.001).all(), "HVDC"
+    assert (solution.TImport.min(axis=2) >= -0.001).all(), "HVDC"
+    
+    assert (np.abs(solution.TExport.min(axis=2)) - solution.CHVDC <= 0.001).all(), "HVDC"
+    assert (np.abs(solution.TExport.max(axis=2)) >= - 0.001).all(), "HVDC"
+    
+
     assert (solution.MDischarge.max(axis=0) - solution.CPHP <= 0.001).all(), "Phes Discharge"
     assert (solution.MCharge.max(axis=0)    - solution.CPHP <= 0.001).all(), "Phes Charge"
     assert (solution.MStorage.max(axis=0)   - solution.CPHS <= 0.001).all(), "Phes SOC, too much"

@@ -85,6 +85,7 @@ def TransmissionSimulate(solution):
                 
         # fill deficits by drawing down neighbours' storage reserves
         if solution.MDeficit[t].sum() > 1e-6:
+            break
             Surplus = np.maximum(0, solution.MSpillage[t] + solution.MCharge[t] + 
                 np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution) - solution.MDischarge[t])
             if Surplus.sum() > 1e-6: 
@@ -97,8 +98,8 @@ def TransmissionSimulate(solution):
         # export as much spillage as possible
         if solution.MSpillage[t].sum() > 1e-6:
             # This is surplus charging capacity, not export capacity
-            Surplus = np.minimum(solution.CPHP - solution.MCharge[t], 
-                       (solution.CPHS-solution.MStorage[t-1])/solution.resolution/solution.efficiency)
+            Surplus = np.minimum(solution.CPHP - solution.MCharge[t] + solution.MDischarge[t], # charge capacity
+                       (solution.CPHS-solution.MStorage[t-1])/solution.resolution/solution.efficiency) # energy constraint 
             Interconnection(solution, Surplus, solution.MSpillage[t], solution.TImport[t], solution.TExport[t])
             # update storage behaviour  
             StorageBehaviourt(solution, t)

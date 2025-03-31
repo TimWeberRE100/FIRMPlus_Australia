@@ -17,6 +17,7 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
     # Since many if not most calls of this function only require primary transmission
     #   I have split it out from general nthary transmission to improve speed
     
+    _transmission = np.zeros_like(Fillt)
     # loop through nodes with deficits 
     for n, f in enumerate(Fillt):
         if f < 1e-6:
@@ -33,9 +34,6 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
             # continue if no surplus to be traded
             continue
   
-        # intermediate calculation array
-        _transmission = np.zeros_like(Fillt)
-        
         # maximum exportable
         _transmission[pdonors] = np.minimum(
             Surplust[pdonors], # power resource constraint 
@@ -52,9 +50,11 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
         Fillt[n] -= _transmission.sum()
         # adjust surpluses
         Surplust -= _transmission                
+        _transmission[pdonors] = 0
 
     # Continue with nthary transmission 
     # Note: This code block works for primary transmission too, but is slower
+    _import = np.zeros_like(Importt)
     if Surplust.sum() > 1e-6 and Fillt.sum() > 1e-6:
         # loop through secondary, tertiary, ..., nthary connections
         for leg in range(1, solution.networksteps):
@@ -73,11 +73,9 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
                 # donors[-1] is where power comes from. donors[:-1] is are nodes it travels through
                 if Surplust[donors[-1]].sum() <= 1e-6:
                     continue
-                # add receiver to start of donors
-                donors = np.concatenate((np.full((1, ndonors), n), donors))
                 
                 # intermediate calculation array
-                _import = np.zeros_like(Importt)
+                _import[:] = 0
                 for d, dl in zip(donors[-1], donor_lines.T): # print(d,dl)
                     # power use of each line
                     _import[dl, d] = Surplust[d]
@@ -92,19 +90,21 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
                 # intermediate calculation array
                 _transmission = _import.sum(axis=0)
                 # transmission is the least amount that any one line in the chain can host
-                for _row in _import:
-                    zmask = _row!=0
-                    _transmission[zmask] = np.minimum(_row, _transmission)[zmask]
+                for _row in _import: # print(_row)
+                    _transmission[_row!=0] = np.minimum(_row, _transmission)[_row!=0]
                 # remove invalid values
                 _transmission=np.maximum(0, _transmission)
                 # scale down to fill requirement
                 _transmission /= max(1, _transmission.sum()/Fillt[n])
                 
-                # add all this info to our operations log
+                # add receiver to start of donors
+                donors = np.concatenate((np.full((1, ndonors), n), donors))
+
                 for nd, d, dl in zip(range(ndonors), donors[-1], donor_lines.T):
-                    for step, l in enumerate(dl): 
-                        Importt[l, donors[step, nd]] += _transmission[d]
-                        Exportt[l, donors[step+1, nd]] -= _transmission[d]
+                  for step, l in enumerate(dl): 
+                      Importt[l, donors[step, nd]] += _transmission[d]
+                      Exportt[l, donors[step+1, nd]] -= _transmission[d]
+                        
                 # Adjust fill and surplus
                 Fillt[n] -= _transmission.sum()
                 Surplust -= _transmission                

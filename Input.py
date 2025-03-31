@@ -56,7 +56,6 @@ DCloss = Lengths * 0.03 * 0.001 #3% per 1000 km
 undersea_mask = np.array([0, 0, 0, 0, 0, 0, 1], dtype=bool)
 
 efficiency = 0.8
-factor = np.genfromtxt('Data/factor.csv', delimiter=',', usecols=1)
 
 if scenario<=17:
     node = Nodel[scenario % 10]
@@ -129,9 +128,9 @@ ub = np.array([32.] * pzones + [32.]  * wzones + [32.] * nodes + [500.] * nodes 
 x0 = np.concatenate((
     MLoad.sum()/intervals*0.75 / len(PVl) / TSPV.mean(axis=0), 
     MLoad.sum()/intervals*0.75 / len(Windl) / TSWind.mean(axis=0), 
-    MLoad.max(axis=0)*1.1, 
+    MLoad.max(axis=0)*1, 
     MLoad.max(axis=0)*36, 
-    np.repeat(MLoad.max()*0.75, nhvdc)))
+    np.repeat(MLoad.max()*0.6, nhvdc)))
 x0 = np.minimum(ub, x0)
 
 triangulars = np.array([0,1,3,6,10,15,21,28], np.int64)
@@ -332,15 +331,14 @@ if __name__=='__main__':
     cost_model = Raw_Costs(scenario, Lengths, undersea_mask, network_mask).CostFactors()
 
     # x = np.genfromtxt('Results/Optimisation_resultx{}.csv'.format(scenario), delimiter=',', dtype=float)
-    solution = Solution(x0)
-    Evaluate(solution, cost_model)
-    print(solution.LCOE, solution.Penalties)
     
     @njit
-    def test(cost_model, disp=False):
-        x = (ub-lb)*np.random.rand(len(lb))
-        solution = Solution(x)
+    def test(x, cost_model, disp=False):
+        solution = Solution(x0)
         Evaluate(solution, cost_model)
         if disp:
             print(solution.LCOE, solution.Penalties)
-    test(cost_model)
+    test(x0, cost_model, True)
+    x = (ub-lb)*np.random.rand(len(lb))
+    test(x, cost_model)
+    

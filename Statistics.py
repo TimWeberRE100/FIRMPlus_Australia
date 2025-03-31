@@ -33,11 +33,14 @@ def Debug(solution):
     assert solution.MPV.sum(axis=1).max() <= solution.CPV.sum()
     assert solution.MWind.sum(axis=1).max() <= solution.CWind.sum()
 
-    assert (solution.TImport.max(axis=2) - solution.CHVDC <= 0.001).all(), "HVDC"
-    assert (solution.TImport.min(axis=2) >= -0.001).all(), "HVDC"
+    inter_lines = (solution.TImport + solution.TExport).sum(axis=2)
+    inter_nodes = (solution.TImport + solution.TExport).sum(axis=1)
+
+    assert (solution.TImport.max(axis=2) - solution.CHVI <= 0.001).all(), "HVI bounds"
+    assert (solution.TImport.min(axis=2) >= -0.001).all(), "HVI bounds"
     
-    assert (np.abs(solution.TExport.min(axis=2)) - solution.CHVDC <= 0.001).all(), "HVDC"
-    assert (np.abs(solution.TExport.max(axis=2)) >= - 0.001).all(), "HVDC"
+    assert (solution.TExport.min(axis=2) + solution.CHVI >= -0.001).all(), "HVI bounds"
+    assert (solution.TExport.max(axis=2) <= 0.001).all(), "HVI bounds"
     
 
     assert (solution.MDischarge.max(axis=0) - solution.CPHP <= 0.001).all(), "Phes Discharge"

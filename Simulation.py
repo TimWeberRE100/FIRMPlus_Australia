@@ -69,7 +69,6 @@ def TransmissionSimulate(solution):
                 
         # fill deficits by drawing down neighbours' storage reserves
         if solution.MDeficit[t].sum() > 1e-6:
-            break
             Surplus = np.maximum(0, solution.MSpillage[t] + solution.MCharge[t] + 
                 np.minimum(solution.CPHP, solution.MStorage[t-1] / solution.resolution) - solution.MDischarge[t])
             if Surplus.sum() > 1e-6: 

@@ -13,25 +13,6 @@ from Interconnection import Interconnection
 @njit
 def Simulate(solution):
     TransmissionSimulate(solution)
-    if solution.MDeficit.sum() <= 1e-6:
-        return 
-    
-    fill = np.zeros(solution.nodes, dtype=np.float64)
-    #timestep backwards
-    for t in range(solution.intervals-1, -1, -1):
-        if solution.MDeficit[t].sum() > 1e-6:
-            # accumulate deficit + storage efficiency 
-            fill += solution.MDeficit[t]/solution.efficiency
-        if fill.sum() > 1e-6 and solution.MSpillage[t].sum() > 1e-6:
-            # cap fill by storage capacity
-            fill = np.minimum(fill, (solution.CPHS - solution.MStorage[t-1])/solution.resolution/solution.efficiency)
-            # meet fill with neighbours' spillage - don't draw down power as this affects future SOC
-            Interconnection(solution, fill, solution.MSpillage[t], solution.TImport[t], solution.TExport[t])
-            # fill adjusted in-place
-    # fix storage traces
-    BasicSimulate(solution)
-    if solution.MDeficit.sum() <= 1e-6:
-        return 
 
     fill = np.zeros(solution.nodes, np.float64)
     for t in range(solution.intervals-1, -1, -1):
@@ -56,14 +37,15 @@ def Simulate(solution):
             flex = np.minimum(np.minimum(fill, 
                               solution.CPeak - solution.MFlexible[t]),
                               solution.CPHP - solution.MCharge[t] + solution.MDischarge[t])
-            if fill.sum() - flex.sum() > 1e-6:
-                _import, _export = solution.TImport[t].copy(), solution.TExport[t].copy()
-                Interconnection(solution, fill-flex, solution.CPeak - solution.MFlexible[t] - flex, 
-                     solution.TImport[t], solution.TExport[t])
-                flex += np.maximum(0, (_import + _export - solution.TImport[t] - solution.TExport[t]).sum(axis=0))
             fill -= flex
             solution.MFlexible[t] += flex
-
+            if fill.sum() - flex.sum() > 1e-6:
+                _import, _export = solution.TImport[t].copy(), solution.TExport[t].copy()
+                Interconnection(solution, fill, solution.CPeak - solution.MFlexible[t], 
+                     solution.TImport[t], solution.TExport[t])
+                solution.MFlexible[t] += np.maximum(0, (_import + _export - solution.TImport[t] - solution.TExport[t]).sum(axis=0))
+                # fill adjusted in-place
+                
     BasicSimulate(solution)
     
     solution.TDC = (np.atleast_3d(solution.trans_mask).T*(solution.TImport + solution.TExport)).sum(axis=2)
@@ -107,6 +89,24 @@ def TransmissionSimulate(solution):
             Imbalancet(solution, t)
         
         UpdateSOCt(solution, t)
+        
+    if solution.MDeficit.sum() <= 1e-6:
+        solution.TDC = (np.atleast_3d(solution.trans_mask).T*(solution.TImport + solution.TExport)).sum(axis=2)
+        return 
+    
+    fill = np.zeros(solution.nodes, dtype=np.float64)
+    #timestep backwards
+    for t in range(solution.intervals-1, -1, -1):
+        if fill.sum() > 1e-6 and solution.MSpillage[t].sum() > 1e-6:
+            # cap fill by storage capacity
+            fill = np.minimum(fill, (solution.CPHS - solution.MStorage[t-1])/solution.resolution/solution.efficiency)
+            # meet fill with neighbours' spillage - don't draw down power as this affects future SOC
+            Interconnection(solution, fill, solution.MSpillage[t], solution.TImport[t], solution.TExport[t])
+            # fill adjusted in-place
+        fill += solution.MDeficit[t]/solution.efficiency
+    # fix storage traces
+    BasicSimulate(solution)
+        
     solution.TDC = (np.atleast_3d(solution.trans_mask).T*(solution.TImport + solution.TExport)).sum(axis=2)
     
 @njit

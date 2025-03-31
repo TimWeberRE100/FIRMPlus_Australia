@@ -110,7 +110,7 @@ elif scenario>=21:
     
 MLoad, TSPV, TSWind = (x[:intervals, :] for x in (MLoad, TSPV, TSWind))
 
-nhvdc = network_mask.sum()   
+nhvi = network_mask.sum()   
 nodes = MLoad.shape[1]
 
 pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
@@ -121,8 +121,8 @@ spidx, seidx = pzones + wzones + nodes, pzones + wzones + nodes + nodes
 energy = MLoad.sum() * 1000 * resolution / years # MWh p.a.
 contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
-lb = np.array([0.]  * pzones + [0.]   * wzones + [0.] * nodes  + [0.] * nodes   + [0.] * nhvdc)
-ub = np.array([32.] * pzones + [32.]  * wzones + [32.] * nodes + [500.] * nodes + [100.]* nhvdc)
+lb = np.array([0.]  * pzones + [0.]   * wzones + [0.] * nodes  + [0.] * nodes   + [0.] * nhvi)
+ub = np.array([32.] * pzones + [32.]  * wzones + [32.] * nodes + [500.] * nodes + [100.]* nhvi)
               # list(np.array(CDCmax)[network_mask]))
 
 x0 = np.concatenate((
@@ -130,7 +130,7 @@ x0 = np.concatenate((
     MLoad.sum()/intervals*0.75 / len(Windl) / TSWind.mean(axis=0), 
     MLoad.max(axis=0)*1, 
     MLoad.max(axis=0)*36, 
-    np.repeat(MLoad.max()*0.6, nhvdc)))
+    np.repeat(MLoad.max()*0.6, nhvi)))
 x0 = np.minimum(ub, x0)
 
 triangulars = np.array([0,1,3,6,10,15,21,28], np.int64)
@@ -212,7 +212,7 @@ solution_spec = [
     ('x', float64[:]),
     ('intervals', int64),
     ('nodes', int64),
-    ('nhvdc', int64),
+    ('nhvi', int64),
     ('resolution',float64),
     ('years',int64),
     ('efficiency', float64),
@@ -282,7 +282,7 @@ class Solution:
 
         self.Flex_res = 20000 /resolution*years
         self.intervals, self.nodes = intervals, nodes
-        self.nhvdc = network_mask.sum()
+        self.nhvi = network_mask.sum()
         self.resolution, self.efficiency = resolution, efficiency
         self.years = years
         self.network, self.directconns = network, directconns
@@ -322,8 +322,8 @@ class Solution:
         self.MStorage   = np.zeros((self.intervals, self.nodes), dtype=np.float64)
         self.MStorage[-1] = 0.5*self.CPHS
 
-        self.TImport = np.zeros((self.intervals, self.nhvdc, self.nodes), dtype=np.float64)
-        self.TExport = np.zeros((self.intervals, self.nhvdc, self.nodes), dtype=np.float64)
+        self.TImport = np.zeros((self.intervals, self.nhvi, self.nodes), dtype=np.float64)
+        self.TExport = np.zeros((self.intervals, self.nhvi, self.nodes), dtype=np.float64)
         self.TDC = np.zeros((self.intervals, self.nodes), dtype=np.float64)
 
 

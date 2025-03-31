@@ -117,13 +117,10 @@ pzones, wzones = (TSPV.shape[1], TSWind.shape[1])
 pidx, widx = pzones, pzones + wzones
 spidx, seidx = pzones + wzones + nodes, pzones + wzones + nodes + nodes
 
-
 energy = MLoad.sum() * 1000 * resolution / years # MWh p.a.
-contingency = list(0.25 * MLoad.max(axis=0) * pow(10, -3)) # MW to GW
 
 lb = np.array([0.]  * pzones + [0.]   * wzones + [0.] * nodes  + [0.] * nodes   + [0.] * nhvi)
 ub = np.array([32.] * pzones + [32.]  * wzones + [32.] * nodes + [500.] * nodes + [100.]* nhvi)
-              # list(np.array(CDCmax)[network_mask]))
 
 x0 = np.concatenate((
     MLoad.sum()/intervals*0.75 / len(PVl) / TSPV.mean(axis=0), 

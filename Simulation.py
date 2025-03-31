@@ -17,11 +17,13 @@ def Simulate(solution):
     fill = np.zeros(solution.nodes, np.float64)
     for t in range(solution.intervals-1, -1, -1):
         # timestep backwards
-        if solution.MDeficit[t].sum() > 1e-6:
+        if solution.MDeficit[t].sum() >= 1e-6:
             # meet deficits just-in-time with flex
             solution.MFlexible[t] = np.minimum(solution.MDeficit[t], solution.CPeak)
+            #Deficit modified in place by Interconnection below, so emulate that behaviour here
+            solution.MDeficit[t] -= solution.MFlexible[t] 
             # if remaining deficits:
-            if solution.MDeficit[t].sum() - solution.MFlexible[t].sum() > 1e-6:
+            if solution.MDeficit[t].sum() >= 1e-6:
                 # original import/export
                 _import, _export = solution.TImport[t].copy(), solution.TExport[t].copy()
                 # meet deficits just-in-time by importiing flex from neighbours
@@ -30,8 +32,8 @@ def Simulate(solution):
                 # flexible += iexports from neighbours
                 solution.MFlexible[t] += np.maximum(0, (_import + _export - solution.TImport[t] - solution.TExport[t]).sum(axis=0))
             # accumulate remaing deficits
-            fill += (solution.MDeficit[t]-solution.MFlexible[t])/solution.efficiency
-        if fill.sum() > 1e-6:
+            fill += solution.MDeficit[t]/solution.efficiency
+        if fill.sum() >= 1e-6:
             # # simplified charging model
             fill = np.minimum(fill, (solution.CPHS - solution.MStorage[t-1])/solution.resolution/solution.efficiency)
             flex = np.minimum(np.minimum(fill, 
@@ -39,7 +41,7 @@ def Simulate(solution):
                               solution.CPHP - solution.MCharge[t] + solution.MDischarge[t])
             fill -= flex
             solution.MFlexible[t] += flex
-            if fill.sum() - flex.sum() > 1e-6:
+            if fill.sum() - flex.sum() >= 1e-6:
                 _import, _export = solution.TImport[t].copy(), solution.TExport[t].copy()
                 Interconnection(solution, fill, solution.CPeak - solution.MFlexible[t], 
                      solution.TImport[t], solution.TExport[t])

@@ -9,12 +9,17 @@ import numpy as np
 from numba import njit  # type: ignore
 
 from firm.Interconnection import Interconnection
+from firm.profile import cclock
 
 
 @njit
 def Simulate(solution):
-    TransmissionSimulate(solution)
 
+    start_transmission = cclock()
+    TransmissionSimulate(solution)
+    solution.time_transmission += cclock() - start_transmission
+
+    start_backfill = cclock()
     fill = np.zeros(solution.nodes, np.float64)
     for t in range(solution.intervals - 1, -1, -1):
         # timestep backwards
@@ -61,8 +66,11 @@ def Simulate(solution):
                     0, (_import + _export - solution.TImport[t] - solution.TExport[t]).sum(axis=0)
                 )
                 # fill adjusted in-place
+    solution.time_backfill += cclock() - start_backfill
 
+    start_basic = cclock()
     BasicSimulate(solution)
+    solution.time_basic += cclock() - start_basic
 
     solution.TDC = (np.atleast_3d(solution.trans_mask).T * (solution.TImport + solution.TExport)).sum(axis=2)
 
@@ -149,14 +157,21 @@ def BasicSimulate(solution):
 
 @njit
 def UpdateSOCt(solution, t):
+    start = cclock()
+
     # Previous energy + charge - discharge
     solution.MStorage[t] = solution.MStorage[t - 1] + solution.resolution * (
         solution.MCharge[t] * solution.efficiency - solution.MDischarge[t]
     )
 
+    solution.time_update_soc += cclock() - start
+
 
 @njit
 def StorageBehaviourt(solution, t):
+
+    start = cclock()
+
     solution.MCharge[t] = np.minimum(
         np.minimum(
             # available/required power = demand - generation - imports
@@ -180,9 +195,13 @@ def StorageBehaviourt(solution, t):
         solution.MStorage[t - 1] / solution.resolution,
     )  # storage energy constraint
 
+    solution.time_storage_behavior += cclock() - start
+
 
 @njit
 def Imbalancet(solution, t):
+    start = cclock()
+
     solution.MDeficit[t] = np.maximum(
         0,
         solution.MNetload[t]
@@ -199,6 +218,8 @@ def Imbalancet(solution, t):
         + solution.MCharge[t]
         - solution.MDischarge[t],
     )
+
+    solution.time_imbalancet += cclock() - start
 
 
 @njit

@@ -6,8 +6,9 @@
 from argparse import ArgumentParser
 
 import numpy as np
-from numba import boolean, float64, int64, njit  # type: ignore
+from numba import boolean, float64, int64, njit, types  # type: ignore
 from numba.experimental import jitclass  # type: ignore
+from numba.typed.typeddict import Dict as TypedDict
 
 parser = ArgumentParser()
 parser.add_argument("-i", default=1000, type=int, required=False, help="maxiter=4000, 400")
@@ -313,6 +314,14 @@ solution_spec = [
     ("LCOBL", float64),
     ("CAPEX", float64),
     ("OPEX", float64),
+    ("time_transmission", float64),
+    ("time_backfill", float64),
+    ("time_basic", float64),
+    ("time_interconnection", float64),
+    ("time_storage_behavior", float64),
+    ("time_imbalancet", float64),
+    ("time_update_soc", float64),
+    ("cache_get_network_donors", types.DictType(int64, int64[:, :])),
 ]
 
 
@@ -346,6 +355,15 @@ class Solution:
         self.CPeak = CPeak
         self.CHydro = CHydro
         self.CBio = CBio
+
+        self.cache_get_network_donors = TypedDict.empty(int64, int64[:, :])
+        self.time_transmission = 0.0
+        self.time_transmission = 0.0
+        self.time_backfill = 0.0
+        self.time_basic = 0.0
+        self.time_storage_behavior = 0.0
+        self.time_imbalancet = 0.0
+        self.time_update_soc = 0.0
 
     def _instantiate_operations(self):
         self.MLoad = MLoad

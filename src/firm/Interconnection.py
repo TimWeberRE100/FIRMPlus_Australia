@@ -5,10 +5,24 @@ Created on Wed Oct  9 07:51:51 2024
 @author: u6942852
 """
 
+
 import numpy as np
 from numba import njit  # type: ignore
 
+from firm.profile import cclock  # type: ignore
+
 triangulars = np.array([0, 1, 3, 6, 10, 15, 21])
+
+
+@njit
+def get_network_donors(solution, n):
+    cache_result = solution.cache_get_network_donors.get(n, None)
+    if cache_result is not None:
+        return cache_result
+
+    result = solution.network[:, n, 0, :]
+    solution.cache_get_network_donors[n] = result
+    return result
 
 
 @njit
@@ -17,7 +31,7 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
     #   nthary connection
     # Since many if not most calls of this function only require primary transmission
     #   I have split it out from general nthary transmission to improve speed
-
+    time_start = cclock()
     _transmission = np.zeros_like(Fillt)
     # loop through nodes with deficits
     for n, f in enumerate(Fillt):
@@ -26,7 +40,7 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
         # appropriate slice of network array
         # pdonors is equivalent to donors later on but has different ndim so needs to
         #   be a different variable name for static typing
-        pdonors = solution.network[:, n, 0, :]
+        pdonors = get_network_donors(solution, n)  # pdonors = solution.network[:, n, 0, :]
         valid_mask = pdonors[0] != -1
         # donor nodes and donor lines
         pdonors, pdonor_lines = pdonors[0, valid_mask], pdonors[1, valid_mask]
@@ -117,4 +131,6 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
             if Surplust.sum() <= 1e-6 or Fillt.sum() <= 1e-6:
                 break
 
+    time_end = cclock()
+    solution.time_interconnection += time_end - time_start
     return Importt, Exportt

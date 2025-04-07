@@ -36,6 +36,11 @@ dependencies = ["numba>=0.60", "numpy>=1.25", "scipy>=1.12"]
 [project.optional-dependencies]
 dev = ["bandit", "flake8", "mypy", "black", "coverage", "scipy-stubs"]
 test = ["pytest"]
+cli = ["click", "rich"]
 
 [tool.setuptools.package-data]
 "firm" = ["py.typed"]
+
+[project.scripts]
+firm = "firm.CmdLineEntry:cli"
+

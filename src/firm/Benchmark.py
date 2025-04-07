@@ -1,0 +1,160 @@
+import numpy as np
+from numba import njit, prange  # type: ignore
+from psutil import cpu_count
+
+from firm.Input import (
+    Evaluate,
+    Solution,
+    cost_model,
+    lb,
+    lengths,
+    network_mask,
+    scenario,
+    ub,
+    undersea_mask,
+    x0,
+    zero_safe_division,
+)
+
+
+def Benchmark(n):
+    _benchmark(n, x0, cost_model)
+
+@njit(parallel=True)
+def _benchmark(i, x, cost_model):
+    result = np.empty(i)
+    for j in prange(i):
+        result[j] = test(x, cost_model)
+
+@njit
+def test(x, cost_model, disp=False):
+    solution = Solution(x)
+    Evaluate(solution, cost_model)
+    return solution.LCOE+solution.Penalties
+
+@njit
+def profile(x, 
+            cost_model, 
+            disp: bool = True, 
+            years: int = -1,
+            ):
+    solution = Solution(x, years, True)
+    Evaluate(solution, cost_model)
+    if disp:
+        #          ("time_storage_behavior", float64),
+        # ("time_imbalancet", float64),
+        # ("time_update_soc", float64),
+        print(
+            "transmission\t\t",
+            solution.calls_transmission, "\t|", 
+            solution.time_transmission, "\t|", 
+            zero_safe_division(
+                solution.time_transmission,
+                solution.calls_transmission),
+            "cc \n backfill\t\t\t",
+            solution.calls_backfill, "\t|", 
+            solution.time_backfill, "\t|", 
+            zero_safe_division(
+                solution.time_backfill, 
+                solution.calls_backfill),
+            "cc \n basic\t\t\t\t",
+            solution.calls_basic, "\t|", 
+            solution.time_basic, "\t|", 
+            zero_safe_division(
+                solution.time_basic, 
+                solution.calls_basic),
+            "cc \n interconnection\t\t",
+            (solution.calls_interconnection0
+             +solution.calls_interconnection1
+             +solution.calls_interconnection2
+             +solution.calls_interconnection3), "\t|", 
+            (solution.time_interconnection0
+             +solution.time_interconnection1
+             +solution.time_interconnection2
+             +solution.time_interconnection3), "\t|", 
+            zero_safe_division(
+                solution.time_interconnection0
+                +solution.time_interconnection1
+                +solution.time_interconnection2
+                +solution.time_interconnection3, 
+                solution.calls_interconnection0
+                +solution.calls_interconnection1
+                +solution.calls_interconnection2
+                +solution.calls_interconnection3),
+            "cc \n interconnection0\t\t",
+            solution.calls_interconnection0, "\t|", 
+            solution.time_interconnection0, "\t|", 
+            zero_safe_division(
+                solution.time_interconnection0, 
+                solution.calls_interconnection0),
+            "cc \n interconnection1\t\t",
+            solution.calls_interconnection1, "\t|", 
+            solution.time_interconnection1, "\t|", 
+            zero_safe_division(
+                solution.time_interconnection1, 
+                solution.calls_interconnection1),
+            "cc \n interconnection2\t\t",
+            solution.calls_interconnection2, "\t|", 
+            solution.time_interconnection2, "\t|", 
+            zero_safe_division(
+                solution.time_interconnection2, 
+                solution.calls_interconnection2),
+            "cc \n interconnection3\t\t",
+            solution.calls_interconnection3, "\t|", 
+            solution.time_interconnection3, "\t|", 
+            zero_safe_division(
+                solution.time_interconnection3, 
+                solution.calls_interconnection3),
+            "cc \n storage_behavior\t",
+            solution.calls_storage_behavior, "\t|", 
+            solution.time_storage_behavior, "\t|", 
+            zero_safe_division(
+                solution.time_storage_behavior, 
+                solution.calls_storage_behavior),
+            "cc \n storage_behaviort\t",
+            solution.calls_storage_behaviort, "\t|", 
+            solution.time_storage_behaviort, "\t|", 
+            zero_safe_division(
+                solution.time_storage_behaviort, 
+                solution.calls_storage_behaviort),
+            "cc \n spilldef\t\t\t",
+            solution.calls_spilldef, "\t|", 
+            solution.time_spilldef, "\t|", 
+            zero_safe_division(
+                solution.time_spilldef, 
+                solution.calls_spilldef),
+            "cc \n spilldeft\t\t\t",
+            solution.calls_spilldeft, "\t|",
+            solution.time_spilldeft, "\t|", 
+            zero_safe_division(
+                solution.time_spilldeft, 
+                solution.calls_spilldeft),
+            "cc \n update_soc\t\t\t",
+            solution.calls_update_soc, "\t|", 
+            solution.time_update_soc, "\t|", 
+            zero_safe_division(
+                solution.time_update_soc, 
+                solution.calls_update_soc),
+            "cc \n update_soct\t\t\t",
+            solution.calls_update_soct, "\t|", 
+            solution.time_update_soct, "\t|", 
+            zero_safe_division(
+                solution.time_update_soct, 
+                solution.calls_update_soct),
+            "cc \n unbalancedt\t\t\t",
+            solution.calls_unbalancedt, "\t|", 
+            solution.time_unbalancedt, "\t|", 
+            zero_safe_division(
+                solution.time_unbalancedt, 
+                solution.calls_unbalancedt),
+            "cc \n unbalanced\t\t\t",
+            solution.calls_unbalanced, "\t|", 
+            solution.time_unbalanced, "\t|", 
+            zero_safe_division(
+                solution.time_unbalanced, 
+                solution.calls_unbalanced),
+            "cc \n -- ",
+            solution.LCOE,
+            solution.Penalties,
+        )
+    return solution

@@ -258,7 +258,7 @@ def annualization_fossils(capex, fom, vom, fuel, carbon, life, dr):
         ("hvi", float64[:]),
         ("hvu", float64[:]),
         ("scenario", int64),
-        ("Lengths", int64[:]),
+        ("lengths", int64[:]),
         ("undersea_mask", boolean[:]),
         ("network_mask", boolean[:]),
     ]
@@ -267,12 +267,12 @@ class Raw_Costs:
     def __init__(
         self,
         scenario,
-        Lengths=np.array([], np.int64),
+        lengths=np.array([], np.int64),
         undersea_mask=np.array([], np.bool_),
         network_mask=np.array([], np.bool_),
     ):
         self.scenario = scenario
-        self.Lengths = Lengths
+        self.lengths = lengths
         self.undersea_mask = undersea_mask
         self.network_mask = network_mask
 
@@ -380,7 +380,7 @@ class Cost_Factors:
                         raw_costs.hvu[1],
                         raw_costs.hvu[2],
                         raw_costs.hvu[3],
-                        raw_costs.Lengths[i],
+                        raw_costs.lengths[i],
                         raw_costs.dr,
                     )  # vom is 0
                 else:
@@ -389,9 +389,10 @@ class Cost_Factors:
                     )
         self.hvi = self.hvi.T
 
-
-if __name__ == "__main__":
-
-    from firm.Input import Lengths, network_mask, scenario, undersea_mask
-
-    costs = Raw_Costs(scenario, Lengths, undersea_mask, network_mask).CostFactors()
+if __name__=='__main__':
+    from firm.parameters import Parameters
+    from firm.Input import Scenario
+    parameters = Parameters(1, 21, True)
+    scenario = Scenario(parameters)
+    # costs = Raw_Costs(scenario.s)
+    

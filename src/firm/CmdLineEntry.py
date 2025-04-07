@@ -1,0 +1,359 @@
+import click
+from firm.Parameters import Parameters, DE_Hyperparameters
+from rich.console import Console
+from rich.text import Text
+from rich.table import Table
+from psutil import cpu_count
+
+
+@click.command
+def statistics():
+    import numpy as np 
+    from firm.Input import scenario
+    try: 
+        x = np.genfromtxt(f"Results/Optimisation_resultx{scenario}.csv", 
+                          delimiter=",")
+    except FileNotFoundError as e:
+        print("No solution found. Run optimisation first.")
+        raise e 
+    from firm.Statistics import Information
+    Information(x)
+    
+    
+@click.command
+@click.option(
+    "-p", 
+    "--profiling", 
+    is_flag=True, 
+    default=True, 
+    show_default=True, 
+    required=False, 
+    help='Include time profiling', 
+    )
+@click.option(
+    "-n", 
+    "--number", 
+    default=3, 
+    type=click.IntRange(1),
+    show_default=True, 
+    required=False, 
+    help="How many batches",
+    )
+@click.option(
+    "-e", 
+    "--evals", 
+    default=cpu_count(True)*3, 
+    show_default=True, 
+    required=False, 
+    help="How many evaluations per batch",
+    )
+def benchmark(
+    profiling: bool,
+    years: int,
+    number: int, 
+    evals: int, 
+):
+    
+    print("\nRunning Benchmarking...\n")
+    from firm.firm_run import test, profile
+    from firm.Input import x0, cost_model
+    from firm.utils import zero_safe_division
+    
+    if profiling is True:
+        solution = profile(x0, cost_model, False, years)
+
+        table = Table(title="Profile Results")
+        
+        table.add_column("Function")
+        table.add_column("Calls")
+        table.add_column("Time")
+        table.add_column("Time per call")
+        
+        table.add_row(
+            "Transmission", 
+            str(solution.calls_transmission), 
+            str(solution.time_transmission), 
+            str(zero_safe_division(
+                solution.time_transmission,
+                solution.calls_transmission)), 
+            )
+        table.add_row(
+            "Flexible",
+            str(solution.calls_backfill), 
+            str(solution.time_backfill), 
+            str(zero_safe_division(
+                solution.time_backfill,
+                solution.calls_backfill)),
+            )
+        table.add_row(
+            "Basic Sim",
+            str(solution.calls_basic), 
+            str(solution.time_basic), 
+            str(zero_safe_division(
+                solution.time_basic,
+                solution.calls_basic)), 
+            )
+        table.add_row(
+            "Interconnection",
+            str(solution.calls_interconnection0
+                +solution.calls_interconnection1
+                +solution.calls_interconnection2
+                +solution.calls_interconnection3), 
+            str(solution.time_interconnection0
+                +solution.time_interconnection1
+                +solution.time_interconnection2
+                +solution.time_interconnection3), 
+            str(zero_safe_division(
+                solution.time_interconnection0
+                +solution.time_interconnection1
+                +solution.time_interconnection2
+                +solution.time_interconnection3,
+                solution.calls_interconnection0
+                +solution.calls_interconnection1
+                +solution.calls_interconnection2
+                +solution.calls_interconnection3)), 
+            )
+        table.add_row(
+            "Interconnection0",
+            str(solution.calls_interconnection0),
+            str(solution.time_interconnection0),
+            str(zero_safe_division(
+                solution.time_interconnection0, 
+                solution.calls_interconnection0)),
+            )
+        table.add_row(
+            "Interconnection1",
+            str(solution.calls_interconnection1),
+            str(solution.time_interconnection1),
+            str(zero_safe_division(
+                solution.time_interconnection1,
+                solution.calls_interconnection1)),
+            )
+        table.add_row(
+            "Interconnection2",
+            str(solution.calls_interconnection2),
+            str(solution.time_interconnection2),
+            str(zero_safe_division(
+                solution.time_interconnection2,
+                solution.calls_interconnection2)),
+            )
+        table.add_row(
+            "Interconnection3",
+            str(solution.calls_interconnection3),
+            str(solution.time_interconnection3),
+            str(zero_safe_division(
+                solution.time_interconnection3,
+                solution.calls_interconnection3)),
+            )
+        table.add_row(
+            "storage behav",
+            str(solution.calls_storage_behavior), 
+            str(solution.time_storage_behavior), 
+            str(zero_safe_division(
+                solution.time_storage_behavior,
+                solution.calls_storage_behavior)), 
+            )
+        table.add_row(
+            "storage behav t",
+            str(solution.calls_storage_behaviort), 
+            str(solution.time_storage_behaviort), 
+            str(zero_safe_division(
+                solution.time_storage_behaviort,
+                solution.calls_storage_behaviort)), 
+            )
+        table.add_row(
+            "spill/def",
+            str(solution.calls_spilldef), 
+            str(solution.time_spilldef), 
+            str(zero_safe_division(
+                solution.time_spilldef,
+                solution.calls_spilldef)), 
+            )
+        table.add_row(
+            "spill/def t",
+            str(solution.calls_spilldeft), 
+            str(solution.time_spilldeft), 
+            str(zero_safe_division(
+                solution.time_spilldeft,
+                solution.calls_spilldeft)), 
+            )
+        table.add_row(
+            "soc",
+            str(solution.calls_update_soc),
+            str(solution.time_update_soc),
+            str(zero_safe_division(
+                solution.time_update_soc,
+                solution.calls_update_soc)),
+            )
+        table.add_row(
+            "soc t",
+            str(solution.calls_update_soct), 
+            str(solution.time_update_soct), 
+            str(zero_safe_division(
+                solution.time_update_soct,
+                solution.calls_update_soct)), 
+            )
+        table.add_row(
+            "unbalanced",
+            str(solution.calls_unbalanced), 
+            str(solution.time_unbalanced), 
+            str(zero_safe_division(
+                solution.time_unbalanced,
+                solution.calls_unbalanced)), 
+            )
+        table.add_row(
+            "unbalanced t",
+            str(solution.calls_unbalancedt),
+            str(solution.time_unbalancedt),
+            str(zero_safe_division(
+                solution.time_unbalancedt,
+                solution.calls_unbalancedt)),
+            )
+        table.add_row(
+            "LCOE",
+            str(solution.LCOE), "-", "-",
+            )
+        table.add_row(
+            "Penalties",
+            str(solution.Penalties), "-", "-", 
+            )
+        
+        console = Console()
+        console.print(table)
+
+
+
+@click.command
+@click.option(
+    "-i",
+    "--iterations",
+    default=1000,
+    show_default=True,
+    type=click.IntRange(1, 4000),
+    required=False,
+    help="Maximum iterations",
+)
+@click.option(
+    "-p",
+    "--popsize",
+    default=50,
+    show_default=True,
+    type=click.IntRange(2, 1000),
+    required=False,
+    help="Population size",
+)
+@click.option(
+    "-m", 
+    "--mutation", 
+    default=None, 
+    show_default=True, 
+    type=click.FloatRange(0., 2.), 
+    required=False, 
+    help="Mutation factor"
+    )
+@click.option(
+    "-d", 
+    "--dither", 
+    nargs=2,
+    default=(None, None), 
+    type=click.Tuple([click.FloatRange(0., 2.), click.FloatRange(0., 2.)]),
+    required=False, 
+    help="Mutation factor dither range (overrides --mutation)"
+    )
+
+@click.option(
+    "-r", 
+    "--recombination", 
+    default=0.4, 
+    show_default=True, 
+    type=click.FloatRange(0., 1.), 
+    required=False, 
+    help="Recombination factor"
+    )
+@click.option(
+    "-v",
+    "--progress",
+    default=1,
+    type=click.IntRange(0),
+    show_default=True,
+    required=False,
+    help="Print progress to console",
+)
+@click.option(
+    "-s", 
+    "-stagnation", 
+    default=(5, 0.1),
+    type=click.Tuple([click.IntRange(0), click.FloatRange(0)]), 
+    show_default=True, 
+    required=False, 
+    help="Stagnation condition: (no. of its, minimum improvement)"
+    )
+@click.option(
+    "-f", 
+    "-fileprint", 
+    default=1,
+    type=click.IntRange(0), 
+    show_default=True, 
+    required=False, 
+    help="Frequency to print to file"
+    )
+@click.option(
+    "-y",
+    "--years",
+    default=1,
+    type=click.IntRange(0, 10, clamp=True),
+    required=False,
+    show_default=True,
+    help="No. of years to simulate. -1 indicates max",
+)
+def optimise(
+    iterations: int,
+    popsize: int,
+    mutation: float,
+    dither: tuple[float, float],
+    recombination: float,
+    progress: int,
+    stagnation: tuple[int, float],
+    fileprint: int,
+    years: int,
+):
+    param = Parameters(
+        y = years,
+        p = False,
+    )
+    hyperparam = DE_Hyperparameters(
+        i = iterations, 
+        p = popsize, 
+        m = (mutation if mutation is not None else 
+             dither if dither[0] is not None and dither[1] is not None else 
+             (0.5, 1.0)),
+        r = recombination,
+        v = progress,
+        s = stagnation,
+        f = fileprint,
+        )
+    
+    from firm.Optimisation import Optimise
+    Optimise(param, hyperparam)
+
+@click.group
+def Entry():
+    console = Console()
+    text = Text(
+        r"""
+ _____ ___ ____  __  __ ____  _           
+|  ___|_ _|  _ \|  \/  |  _ \| |_   _ ___ 
+| |_   | || |_) | |\/| | |_) | | | | / __|
+|  _|  | ||  _ <| |  | |  __/| | |_| \__ \
+|_|   |___|_| \_\_|  |_|_|   |_|\__,_|___/
+"""
+    )
+    console.print(text, style="cornflower_blue")
+    version_string = "Version 1.42.2"
+    console.print(version_string, style="cornflower_blue")
+
+Entry.add_command(benchmark)
+Entry.add_command(optimise)
+Entry.add_command(statistics)
+
+

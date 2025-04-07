@@ -57,8 +57,9 @@ def generate_network(network, Nodel_int):
     network = network[network_mask, :]
     networkdict = {v: k for k, v in enumerate(Nodel_int)}
     # translate into indicies rather than Nodel_int values
-    network = np.array([networkdict[n] for n in network.flatten()], np.int64).reshape(network.shape)
-
+    basic_network = np.array([networkdict[n] for n in network.flatten()], np.int64).reshape(network.shape)
+    network = basic_network.copy()
+    
     trans_mask = np.zeros((len(Nodel_int), len(network)), np.bool_)
     for line, row in enumerate(network):
         trans_mask[row[0], line] = True
@@ -98,4 +99,4 @@ def generate_network(network, Nodel_int):
                 network[1, i, j, k] = directconns[start, network[0, i, j, k]]
 
     directconns = directconns[:-1, :-1]
-    return network, network_mask, trans_mask, directconns, triangulars
+    return basic_network, network, network_mask, trans_mask, directconns, triangulars

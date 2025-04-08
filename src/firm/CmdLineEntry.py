@@ -5,11 +5,11 @@ from rich.text import Text
 from rich.table import Table
 from psutil import cpu_count
 
+from firm.Input import scenario
 
 @click.command
 def statistics():
     import numpy as np 
-    from firm.Input import scenario
     try: 
         x = np.genfromtxt(f"Results/Optimisation_resultx{scenario}.csv", 
                           delimiter=",")
@@ -336,6 +336,126 @@ def optimise(
     from firm.Optimisation import Optimise
     Optimise(param, hyperparam)
 
+@click.command
+@click.option(
+    "-i",
+    "--iterations",
+    default=1000,
+    show_default=True,
+    type=click.IntRange(1, 4000),
+    required=False,
+    help="Maximum iterations",
+)
+@click.option(
+    "-p",
+    "--popsize",
+    default=50,
+    show_default=True,
+    type=click.IntRange(2, 1000),
+    required=False,
+    help="Population size",
+)
+@click.option(
+    "-m", 
+    "--mutation", 
+    default=None, 
+    show_default=True, 
+    type=click.FloatRange(0., 2.), 
+    required=False, 
+    help="Mutation factor"
+    )
+@click.option(
+    "-d", 
+    "--dither", 
+    nargs=2,
+    default=(None, None), 
+    type=click.Tuple([click.FloatRange(0., 2.), click.FloatRange(0., 2.)]),
+    required=False, 
+    help="Mutation factor dither range (overrides --mutation)"
+    )
+
+@click.option(
+    "-r", 
+    "--recombination", 
+    default=0.4, 
+    show_default=True, 
+    type=click.FloatRange(0., 1.), 
+    required=False, 
+    help="Recombination factor"
+    )
+@click.option(
+    "-v",
+    "--progress",
+    default=1,
+    type=click.IntRange(0),
+    show_default=True,
+    required=False,
+    help="Print progress to console",
+)
+@click.option(
+    "-s", 
+    "-stagnation", 
+    default=(5, 0.1),
+    type=click.Tuple([click.IntRange(0), click.FloatRange(0)]), 
+    show_default=True, 
+    required=False, 
+    help="Stagnation condition: (no. of its, minimum improvement)"
+    )
+@click.option(
+    "-f", 
+    "-fileprint", 
+    default=1,
+    type=click.IntRange(0), 
+    show_default=True, 
+    required=False, 
+    help="Frequency to print to file"
+    )
+@click.option(
+    "-y",
+    "--years",
+    default=1,
+    type=click.IntRange(0, 10, clamp=True),
+    required=False,
+    show_default=True,
+    help="No. of years to simulate. -1 indicates max",
+)
+def polish(
+    iterations: int,
+    popsize: int,
+    mutation: float,
+    dither: tuple[float, float],
+    recombination: float,
+    progress: int,
+    stagnation: tuple[int, float],
+    fileprint: int,
+    years: int,
+):
+    import numpy as np 
+    try: 
+        x0 = np.genfromtxt(f"Results/Optimisation_resultx{scenario}.csv", 
+                          delimiter=",")
+    except FileNotFoundError as e:
+        print("No solution found. Run optimisation first.")
+        raise e 
+    param = Parameters(
+        y = years,
+        p = False,
+    )
+    hyperparam = DE_Hyperparameters(
+        i = iterations, 
+        p = popsize, 
+        m = (mutation if mutation is not None else 
+             dither if dither[0] is not None and dither[1] is not None else 
+             (0.5, 1.0)),
+        r = recombination,
+        v = progress,
+        s = stagnation,
+        f = fileprint,
+        )
+    
+    from firm.Optimisation import Polish
+    Polish(x0, param, hyperparam)
+
 @click.group
 def Entry():
     console = Console()
@@ -354,6 +474,7 @@ def Entry():
 
 Entry.add_command(benchmark)
 Entry.add_command(optimise)
+Entry.add_command(polish)
 Entry.add_command(statistics)
 
 

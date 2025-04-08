@@ -396,7 +396,7 @@ def Evaluate(S, cost_model):
     S._instantiate_operations()
     Simulate(S)
 
-    S.Penalties = np.maximum(0, S.MDeficit.sum())  # GWh/resolution
+    S.Penalties = np.maximum(0, S.MDeficit.sum())*1000  # MWh/resolution
 
     CHVI = np.zeros(len(S.network_mask), dtype=np.float64)
     CHVI[S.network_mask] = S.CHVI

@@ -127,6 +127,89 @@ def Optimise(parameters, hyperparameters):
 
     return result, timetaken
 
+@njit(parallel=True)
+def _round_x(x0):
+    # step through 0.001, 0.01, 0.1, 1.0
+    for i in range(3, -1, -1):
+        # re-evaluate elite
+        elite = Objective(x0, cost_model, parameters.y, parameters.p)
+        # copy to prevent issues with parallelisation
+        _x0 = x0.copy()
+        for j in prange(len(x0)):
+            # pick items below (0.001, 0.01, 0.1, 1.0)
+            if x0[j] < 0.1**i and x0[j] > 0:
+                # copy to prevent issues with parallelisation
+                _x = _x0.copy()
+                # set to 0
+                _x[j] = 0
+                # evaluate
+                re = Objective(_x, cost_model)
+                if re <= elite: 
+                    # if no penalties, update x0
+                    x0[j] = 0 
+    return x0
+            
+
+def Polish(
+        x0,
+        parameters, 
+        hyperparameters,
+        ):
+    
+    fileprinter = Fileprinter(
+        f"../Results/History{scenario}.csv", 
+        hyperparameters.f, 
+        header = ["Obj"] + 
+                 [f"PV{n}" for n in range(pzones)] + 
+                 [f"Wind{n}" for n in range(wzones)] +
+                 [f"PHP{n}" for n in range(nodes)] + 
+                 [f"PHE{n}" for n in range(nodes)] + 
+                 [f"HVI{n}" for n in range(nhvi)],
+        resume=True,
+        )
+    
+    x0 = _round_x(x0)
+    
+    lb_p, ub_p = lb.copy(), ub.copy()
+    lb_p[np.where(x0==0)[0]] = 0
+    ub_p[np.where(x0==0)[0]] = 0
+    
+    starttime = dt.now()
+    print("Polishing starts at", starttime)
+    result = differential_evolution(
+        func=ObjectiveWrapper,
+        args=(
+            fileprinter,
+            cost_model, 
+            parameters.y, 
+            parameters.p,
+            ),
+        bounds=list(zip(lb_p, ub_p)),
+        tol=0,
+        maxiter=hyperparameters.i,
+        popsize=hyperparameters.p,
+        mutation=hyperparameters.m,
+        recombination=hyperparameters.r,
+        disp=False,
+        callback=CallbackClass(
+            hyperparameters.v, 
+            *hyperparameters.s,
+            ),
+        polish=False,
+        updating="deferred",
+        x0=x0,
+        vectorized=True
+    )
+    endtime = dt.now()
+    timetaken = endtime - starttime
+    print("Optimisation took", timetaken)
+
+    with open(f"../Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(result.x)
+
+    return result, timetaken
+
 
 if __name__ == "__main__":
     parameters = Parameters(y=1, p=False)
@@ -139,11 +222,20 @@ if __name__ == "__main__":
         s = (10, 1),
         f = 1,
         )
-    
+    polish_hparameters = DE_Hyperparameters(
+        i = 10, 
+        p = 10, 
+        m = (0.5, 1.0), 
+        r = 0.5, 
+        v = 5, 
+        s = (10, 1), 
+        f = 1,
+        )
     
     print(Objective(x0, cost_model, parameters.y, parameters.p))
     
     result, time = Optimise(parameters, hyperparameters)
+    result, time = Polish(parameters, polish_hparameters)
 
 
 

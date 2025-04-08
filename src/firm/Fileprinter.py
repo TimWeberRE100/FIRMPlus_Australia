@@ -11,6 +11,13 @@ from os import remove
 from shutil import copyfile
 
 class Fileprinter:
+    
+# =============================================================================
+#     TODO: 
+#       Don't keep rows in RAM but print to temp file and replace file with temp file
+#          every save_freq calls
+# =============================================================================
+    
     def __init__(self, file_name:str, save_freq:int, header=None, resume=False):
         self.file_name=file_name
         self.temp_file_path = '-temp.csv'.join(self.file_name.split('.csv'))

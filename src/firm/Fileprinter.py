@@ -12,18 +12,11 @@ from shutil import copyfile
 
 class Fileprinter:
     
-# =============================================================================
-#     TODO: 
-#       Don't keep rows in RAM but print to temp file and replace file with temp file
-#          every save_freq calls
-# =============================================================================
-    
     def __init__(self, file_name:str, save_freq:int, header=None, resume=False):
         self.file_name=file_name
         self.temp_file_path = '-temp.csv'.join(self.file_name.split('.csv'))
         self.save_freq=save_freq
         self.callno = 0
-        self.array = None
         if header is not None and self.save_freq > 0: 
             if resume is False:
                 self._createfile(header)
@@ -35,19 +28,17 @@ class Fileprinter:
                     self._createfile(header)
                   
     def Terminate(self):
-        if self.array is not None:
-            self._flush()
+        self._commit()
+        remove(self.temp_file_path)
                       
     def __call__(self, arr):
         if self.save_freq == 0:
             return
         self.callno+=1     
-        if self.array is None:
-            self.array=arr
-        else: 
-            self.array = np.concatenate((self.array, arr), axis=0)
+        self._print(self, arr)
+        
         if self.callno % self.save_freq == 0:
-            self._flush()
+            self._commit()
     
     def _print(self):
         with open(self.temp_file_path, 'a', newline='') as file:
@@ -66,12 +57,9 @@ class Fileprinter:
                     
         else:
            copyfile(self.temp_file_path, self.file_name)
-           remove(self.temp_file_path)
            
-    def _flush(self):
+    def _commit(self):
         print('\rWriting out to file. Do not interrupt', end='\r')
-        self._copyfile(True)
-        self._print()
         self._copyfile(False)
         print('\r'+' '*40, end='\r')
         self.array=None

@@ -124,13 +124,13 @@ def Optimise(solution_data, hyperparameters):
 @njit(parallel=True)
 def _round_x(x0, solution_data, cost_model):
     # step through 0.001, 0.01, 0.1, 1.0
-    for i in range(3, -1, -1):
+    for i in range(3, 0, -1):
         # re-evaluate elite
         elite = Objective(x0, solution_data, cost_model)
         # copy to prevent issues with parallelisation
         _x0 = x0.copy()
         for j in prange(len(x0)):
-            # pick items below (0.001, 0.01, 0.1, 1.0)
+            # pick items below (0.001, 0.01, 0.1)
             if x0[j] < 0.1**i and x0[j] > 0:
                 # copy to prevent issues with parallelisation
                 _x = _x0.copy()

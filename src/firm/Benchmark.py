@@ -17,18 +17,18 @@ from firm.Input import (
 )
 
 
-def Benchmark(n):
-    _benchmark(n, x0, cost_model)
+def Benchmark(n, y, p):
+    _benchmark(n, x0, cost_model, y, p)
 
 @njit(parallel=True)
-def _benchmark(i, x, cost_model):
+def _benchmark(i, x, cost_model, y, p):
     result = np.empty(i)
     for j in prange(i):
-        result[j] = test(x, cost_model)
+        result[j] = test(x, cost_model, y, p)
 
 @njit
-def test(x, cost_model, disp=False):
-    solution = Solution(x)
+def test(x, cost_model, y, p):
+    solution = Solution(x, y, p)
     Evaluate(solution, cost_model)
     return solution.LCOE+solution.Penalties
 

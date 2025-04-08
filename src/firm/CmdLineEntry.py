@@ -31,6 +31,15 @@ def statistics():
     help='Include time profiling', 
     )
 @click.option(
+    "-y", 
+    "--years", 
+    default=-1,
+    type=click.IntRange(-1), 
+    required=False,   
+    show_default=True, 
+    help="no. of years to model",
+)
+@click.option(
     "-n", 
     "--number", 
     default=3, 
@@ -43,6 +52,7 @@ def statistics():
     "-e", 
     "--evals", 
     default=cpu_count(True)*3, 
+    type=click.IntRange(1),
     show_default=True, 
     required=False, 
     help="How many evaluations per batch",
@@ -54,14 +64,14 @@ def benchmark(
     evals: int, 
 ):
     
-    print("\nRunning Benchmarking...\n")
-    from firm.firm_run import test, profile
+    print("\nRunning Benchmarking...", end="")
+    from firm.Benchmark import profile
     from firm.Input import x0, cost_model
-    from firm.utils import zero_safe_division
+    from firm.Utils import zero_safe_division
     
     if profiling is True:
         solution = profile(x0, cost_model, False, years)
-
+        print("\r", " "*25, "\r")
         table = Table(title="Profile Results")
         
         table.add_column("Function")
@@ -281,7 +291,7 @@ def benchmark(
 )
 @click.option(
     "-s", 
-    "-stagnation", 
+    "--stagnation", 
     default=(5, 0.1),
     type=click.Tuple([click.IntRange(0), click.FloatRange(0)]), 
     show_default=True, 
@@ -290,7 +300,7 @@ def benchmark(
     )
 @click.option(
     "-f", 
-    "-fileprint", 
+    "--fileprint", 
     default=1,
     type=click.IntRange(0), 
     show_default=True, 
@@ -469,7 +479,7 @@ def Entry():
 """
     )
     console.print(text, style="cornflower_blue")
-    version_string = "Version 1.42.2"
+    version_string = "Version 0.0.1"
     console.print(version_string, style="cornflower_blue")
 
 Entry.add_command(benchmark)

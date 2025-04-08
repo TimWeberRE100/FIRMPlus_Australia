@@ -79,7 +79,7 @@ class CallbackClass:
 
 def Optimise(parameters, hyperparameters):
     fileprinter = Fileprinter(
-        f"../Results/History{scenario}.csv", 
+        f"Results/History{scenario}.csv", 
         hyperparameters.f, 
         header = ["Obj"] + 
                  [f"PV{n}" for n in range(pzones)] + 
@@ -121,7 +121,7 @@ def Optimise(parameters, hyperparameters):
     timetaken = endtime - starttime
     print("Optimisation took", timetaken)
 
-    with open(f"../Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
+    with open(f"Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(result.x)
 
@@ -157,7 +157,7 @@ def Polish(
         ):
     
     fileprinter = Fileprinter(
-        f"../Results/History{scenario}.csv", 
+        f"Results/History{scenario}.csv", 
         hyperparameters.f, 
         header = ["Obj"] + 
                  [f"PV{n}" for n in range(pzones)] + 
@@ -204,7 +204,7 @@ def Polish(
     timetaken = endtime - starttime
     print("Optimisation took", timetaken)
 
-    with open(f"../Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
+    with open(f"Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(result.x)
 

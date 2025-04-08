@@ -42,7 +42,6 @@ def nthary_network(network0, network_1):
     networkn = networkn[1:, :]
     return networkn
 
-
 def count_lines(network):
     unique, counts = np.unique(network[:, np.array([0, -1])], return_counts=True)
     if counts.size > 0:

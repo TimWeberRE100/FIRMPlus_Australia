@@ -4,11 +4,22 @@ from rich.console import Console
 from rich.text import Text
 from rich.table import Table
 from psutil import cpu_count
+from datetime import datetime as dt
 
-from firm.Input import scenario
 
 @click.command
-def statistics():
+@click.option(
+    "-s",
+    "--scenario",
+    default=21,
+    type=click.IntRange(0),
+    required=False,
+    show_default=True,
+    help="Scenario to run",
+)
+def statistics(
+    scenario: int 
+    ):
     import numpy as np 
     try: 
         x = np.genfromtxt(f"Results/Optimisation_resultx{scenario}.csv", 
@@ -22,14 +33,14 @@ def statistics():
     
 @click.command
 @click.option(
-    "-p", 
-    "--profiling", 
-    is_flag=True, 
-    default=True, 
-    show_default=True, 
-    required=False, 
-    help='Include time profiling', 
-    )
+    "-s",
+    "--scenario",
+    default=21,
+    type=click.IntRange(0),
+    required=False,
+    show_default=True,
+    help="Scenario to run",
+)
 @click.option(
     "-y", 
     "--years", 
@@ -38,6 +49,15 @@ def statistics():
     required=False,   
     show_default=True, 
     help="no. of years to model",
+)
+@click.option(
+    "-p", 
+    "--profiling", 
+    is_flag=True,
+    default=True,
+    required=False,   
+    show_default=True, 
+    help="include time profiling",
 )
 @click.option(
     "-n", 
@@ -58,19 +78,34 @@ def statistics():
     help="How many evaluations per batch",
     )
 def benchmark(
-    profiling: bool,
+    scenario: int,
     years: int,
+    profiling: bool,
     number: int, 
     evals: int, 
 ):
     
     print("\nRunning Benchmarking...", end="")
-    from firm.Benchmark import profile
-    from firm.Input import x0, cost_model
+    from firm.Benchmark import profile, Benchmark
+    from firm.Input import Solution_data
+    from firm.Costs import Raw_Costs
     from firm.Utils import zero_safe_division
     
+    parameters = Parameters(scenario, years, False)
+    sd = Solution_data(*parameters)
+    cost_model = Raw_Costs(sd).CostFactors()
+    start = dt.now()
+    for i in range(number): 
+        Benchmark(evals, sd, cost_model)
+    time = dt.now() - start
+    print(f"\rBenchmarking took {time/number} per parallel batch of {evals}.")
+    print("\nRunning Profiling...", end="")
     if profiling is True:
-        solution = profile(x0, cost_model, False, years)
+        parameters = Parameters(scenario, years, True)
+        sd = Solution_data(*parameters)
+        cost_model = Raw_Costs(sd).CostFactors()
+        
+        solution = profile(sd.x0, sd, cost_model, False)
         print("\r", " "*25, "\r")
         table = Table(title="Profile Results")
         
@@ -227,13 +262,31 @@ def benchmark(
             "Penalties",
             str(solution.Penalties), "-", "-", 
             )
-        
+        print("\r", " "*30, sep='', end="")
         console = Console()
         console.print(table)
 
 
 
 @click.command
+@click.option(
+    "-s",
+    "--scenario",
+    default=21,
+    type=click.IntRange(0),
+    required=False,
+    show_default=True,
+    help="Scenario to run",
+)
+@click.option(
+    "-y",
+    "--years",
+    default=1,
+    type=click.IntRange(0, 10, clamp=True),
+    required=False,
+    show_default=True,
+    help="No. of years to simulate. -1 indicates max",
+)
 @click.option(
     "-i",
     "--iterations",
@@ -260,7 +313,7 @@ def benchmark(
     type=click.FloatRange(0., 2.), 
     required=False, 
     help="Mutation factor"
-    )
+)
 @click.option(
     "-d", 
     "--dither", 
@@ -269,8 +322,7 @@ def benchmark(
     type=click.Tuple([click.FloatRange(0., 2.), click.FloatRange(0., 2.)]),
     required=False, 
     help="Mutation factor dither range (overrides --mutation)"
-    )
-
+)
 @click.option(
     "-r", 
     "--recombination", 
@@ -279,7 +331,7 @@ def benchmark(
     type=click.FloatRange(0., 1.), 
     required=False, 
     help="Recombination factor"
-    )
+)
 @click.option(
     "-v",
     "--progress",
@@ -290,7 +342,7 @@ def benchmark(
     help="Print progress to console",
 )
 @click.option(
-    "-s", 
+    "-e", 
     "--stagnation", 
     default=(5, 0.1),
     type=click.Tuple([click.IntRange(0), click.FloatRange(0)]), 
@@ -307,16 +359,9 @@ def benchmark(
     required=False, 
     help="Frequency to print to file"
     )
-@click.option(
-    "-y",
-    "--years",
-    default=1,
-    type=click.IntRange(0, 10, clamp=True),
-    required=False,
-    show_default=True,
-    help="No. of years to simulate. -1 indicates max",
-)
 def optimise(
+    scenario: int,
+    years: int,
     iterations: int,
     popsize: int,
     mutation: float,
@@ -325,9 +370,10 @@ def optimise(
     progress: int,
     stagnation: tuple[int, float],
     fileprint: int,
-    years: int,
 ):
+    
     param = Parameters(
+        s = scenario,
         y = years,
         p = False,
     )
@@ -343,10 +389,31 @@ def optimise(
         f = fileprint,
         )
     
+    from firm.Input import Solution_data
     from firm.Optimisation import Optimise
-    Optimise(param, hyperparam)
+    
+    solution_data = Solution_data(*param)
+    Optimise(solution_data, hyperparam)
 
 @click.command
+@click.option(
+    "-s",
+    "--scenario",
+    default=21,
+    type=click.IntRange(0),
+    required=False,
+    show_default=True,
+    help="Scenario to run",
+)
+@click.option(
+    "-y",
+    "--years",
+    default=1,
+    type=click.IntRange(0, 10, clamp=True),
+    required=False,
+    show_default=True,
+    help="No. of years to simulate. -1 indicates max",
+)
 @click.option(
     "-i",
     "--iterations",
@@ -403,8 +470,8 @@ def optimise(
     help="Print progress to console",
 )
 @click.option(
-    "-s", 
-    "-stagnation", 
+    "-e", 
+    "--stagnation", 
     default=(5, 0.1),
     type=click.Tuple([click.IntRange(0), click.FloatRange(0)]), 
     show_default=True, 
@@ -413,23 +480,16 @@ def optimise(
     )
 @click.option(
     "-f", 
-    "-fileprint", 
+    "--fileprint", 
     default=1,
     type=click.IntRange(0), 
     show_default=True, 
     required=False, 
     help="Frequency to print to file"
     )
-@click.option(
-    "-y",
-    "--years",
-    default=1,
-    type=click.IntRange(0, 10, clamp=True),
-    required=False,
-    show_default=True,
-    help="No. of years to simulate. -1 indicates max",
-)
 def polish(
+    scenario: int,
+    years: int,
     iterations: int,
     popsize: int,
     mutation: float,
@@ -438,7 +498,6 @@ def polish(
     progress: int,
     stagnation: tuple[int, float],
     fileprint: int,
-    years: int,
 ):
     import numpy as np 
     try: 
@@ -448,6 +507,7 @@ def polish(
         print("No solution found. Run optimisation first.")
         raise e 
     param = Parameters(
+        s = scenario,
         y = years,
         p = False,
     )
@@ -463,8 +523,12 @@ def polish(
         f = fileprint,
         )
     
+    from firm.Input import Solution_data
     from firm.Optimisation import Polish
-    Polish(x0, param, hyperparam)
+    
+    solution_data = Solution_data(*param)
+    
+    Polish(x0, solution_data, hyperparam)
 
 @click.group
 def Entry():

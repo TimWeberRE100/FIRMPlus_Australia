@@ -2,43 +2,36 @@ import numpy as np
 from numba import njit, prange  # type: ignore
 from psutil import cpu_count
 
+from firm.Utils import zero_safe_division
 from firm.Input import (
     Evaluate,
     Solution,
-    cost_model,
-    lb,
-    lengths,
-    network_mask,
-    scenario,
-    ub,
-    undersea_mask,
-    x0,
-    zero_safe_division,
+    Solution_data,
 )
 
 
-def Benchmark(n, y, p):
-    _benchmark(n, x0, cost_model, y, p)
+def Benchmark(n, sd, cost_model):
+    _benchmark(n, sd, cost_model)
 
 @njit(parallel=True)
-def _benchmark(i, x, cost_model, y, p):
-    result = np.empty(i)
-    for j in prange(i):
-        result[j] = test(x, cost_model, y, p)
+def _benchmark(n, sd, cost_model):
+    result = np.empty(n)
+    for j in prange(n):
+        result[j] = test(sd.x0, sd, cost_model)
 
 @njit
-def test(x, cost_model, y, p):
-    solution = Solution(x, y, p)
+def test(x, sd, cost_model):
+    solution = Solution(x, sd)
     Evaluate(solution, cost_model)
     return solution.LCOE+solution.Penalties
 
 @njit
 def profile(x, 
+            solution_data,
             cost_model, 
             disp: bool = True, 
-            years: int = -1,
             ):
-    solution = Solution(x, years, True)
+    solution = Solution(x, solution_data)
     Evaluate(solution, cost_model)
     if disp:
         #          ("time_storage_behavior", float64),

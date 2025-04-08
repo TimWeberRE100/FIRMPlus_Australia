@@ -1,6 +1,7 @@
 import numpy as np
 from numba import boolean, float64, int64, njit  # type: ignore
 from numba.experimental import jitclass  # type: ignore
+from firm.Input import lengths, undersea_mask
 
 USD_to_AUD = 1 / 0.65  # AUD to USD where necessary
 discount_rate = 0.0599  # Real discount rate - same as gencost
@@ -266,15 +267,10 @@ def annualization_fossils(capex, fom, vom, fuel, carbon, life, dr):
 class Raw_Costs:
     def __init__(
         self,
-        scenario,
-        lengths=np.array([], np.int64),
-        undersea_mask=np.array([], np.bool_),
-        network_mask=np.array([], np.bool_),
+        solution_data
     ):
-        self.scenario = scenario
-        self.lengths = lengths
-        self.undersea_mask = undersea_mask
-        self.network_mask = network_mask
+        self.scenario = solution_data.scenario
+        self.network_mask = solution_data.network_mask
 
         self.pv = np.array(csiro_pv, np.float64)
         self.onsw = np.array(csiro_onsw, np.float64)
@@ -371,7 +367,7 @@ class Cost_Factors:
 
         self.hvi = np.zeros((len(raw_costs.network_mask), 3), np.float64)
         if raw_costs.scenario >= 21:
-            for i, undersea in enumerate(raw_costs.undersea_mask):
+            for i, undersea in enumerate(undersea_mask):
                 if raw_costs.network_mask[i] is False:
                     continue
                 if undersea:
@@ -380,7 +376,7 @@ class Cost_Factors:
                         raw_costs.hvu[1],
                         raw_costs.hvu[2],
                         raw_costs.hvu[3],
-                        raw_costs.lengths[i],
+                        lengths[i],
                         raw_costs.dr,
                     )  # vom is 0
                 else:
@@ -391,8 +387,8 @@ class Cost_Factors:
 
 if __name__=='__main__':
     from firm.parameters import Parameters
-    from firm.Input import Scenario
-    parameters = Parameters(1, 21, True)
-    scenario = Scenario(parameters)
-    # costs = Raw_Costs(scenario.s)
+    from firm.Input import Solution_data
+    parameters = Parameters(21, 1, False)
+    sd = Solution_data(*parameters)
+    costs = Raw_Costs(sd).CostFactors()
     

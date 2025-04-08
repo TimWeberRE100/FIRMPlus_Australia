@@ -8,35 +8,28 @@ from scipy.optimize import differential_evolution
 from firm.Input import (
     Evaluate, 
     Solution, 
-    cost_model, 
-    x0, 
-    lb, 
-    ub, 
-    scenario, 
-    pzones, 
-    wzones, 
-    nodes, 
-    nhvi,
+    Solution_data,
     )
+from firm.Costs import Raw_Costs
 from firm.Parameters import Parameters, DE_Hyperparameters
 from firm.Fileprinter import Fileprinter
 
-def ObjectiveWrapper(xs, fileprinter, cost_model, y, p):
-    result = ObjectiveParallel(xs.T, cost_model, y, p)
+def ObjectiveWrapper(xs, solution_data, cost_model, fileprinter):
+    result = ObjectiveParallel(xs.T, solution_data, cost_model)
     fileprinter(np.vstack((np.atleast_2d(result), xs)).T) 
     return result
  
 @njit(parallel=True)
-def ObjectiveParallel(xs, cost_model, y, p):
+def ObjectiveParallel(xs, solution_data, cost_model):
     result = np.empty(len(xs), dtype=np.float64)
     for i in prange(len(xs)):
-        result[i] = Objective(xs[i], cost_model, y, p)
+        result[i] = Objective(xs[i], solution_data, cost_model)
     return result
  
 @njit
-def Objective(x, cost_model, y, p):
+def Objective(x, solution_data, cost_model):
     """This is the objective function"""
-    S = Solution(x, y, p)
+    S = Solution(x, solution_data)
     Evaluate(S, cost_model)
     return S.LCOE+S.Penalties
 
@@ -77,30 +70,31 @@ class CallbackClass:
         self.it+=1
         return False
 
-def Optimise(parameters, hyperparameters):
+def Optimise(solution_data, hyperparameters):
     fileprinter = Fileprinter(
-        f"Results/History{scenario}.csv", 
+        f"Results/History{solution_data.scenario}.csv", 
         hyperparameters.f, 
         header = ["Obj"] + 
-                 [f"PV{n}" for n in range(pzones)] + 
-                 [f"Wind{n}" for n in range(wzones)] +
-                 [f"PHP{n}" for n in range(nodes)] + 
-                 [f"PHE{n}" for n in range(nodes)] + 
-                 [f"HVI{n}" for n in range(nhvi)],
+                 [f"PV{n}" for n in range(solution_data.pzones)] + 
+                 [f"Wind{n}" for n in range(solution_data.wzones)] +
+                 [f"PHP{n}" for n in range(solution_data.nodes)] + 
+                 [f"PHE{n}" for n in range(solution_data.nodes)] + 
+                 [f"HVI{n}" for n in range(solution_data.nhvi)],
         resume=False,
         )
+    
+    cost_model = Raw_Costs(solution_data).CostFactors()
     
     starttime = dt.now()
     print("Optimisation starts at", starttime)
     result = differential_evolution(
         func=ObjectiveWrapper,
         args=(
-            fileprinter,
+            solution_data,
             cost_model, 
-            parameters.y, 
-            parameters.p,
+            fileprinter,
             ),
-        bounds=list(zip(lb, ub)),
+        bounds=list(zip(solution_data.lb, solution_data.ub)),
         tol=0,
         maxiter=hyperparameters.i,
         popsize=hyperparameters.p,
@@ -113,7 +107,7 @@ def Optimise(parameters, hyperparameters):
             ),
         polish=False,
         updating="deferred",
-        x0=x0,
+        x0=solution_data.x0,
         vectorized=True
     )
 
@@ -121,18 +115,18 @@ def Optimise(parameters, hyperparameters):
     timetaken = endtime - starttime
     print("Optimisation took", timetaken)
 
-    with open(f"Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
+    with open(f"Results/Optimisation_resultx{solution_data.scenario}.csv", "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(result.x)
 
     return result, timetaken
 
 @njit(parallel=True)
-def _round_x(x0):
+def _round_x(x0, solution_data, cost_model):
     # step through 0.001, 0.01, 0.1, 1.0
     for i in range(3, -1, -1):
         # re-evaluate elite
-        elite = Objective(x0, cost_model, parameters.y, parameters.p)
+        elite = Objective(x0, solution_data, cost_model)
         # copy to prevent issues with parallelisation
         _x0 = x0.copy()
         for j in prange(len(x0)):
@@ -152,37 +146,38 @@ def _round_x(x0):
 
 def Polish(
         x0,
-        parameters, 
+        solution_data, 
         hyperparameters,
         ):
     
     fileprinter = Fileprinter(
-        f"Results/History{scenario}.csv", 
+        f"Results/History{solution_data.scenario}.csv", 
         hyperparameters.f, 
         header = ["Obj"] + 
-                 [f"PV{n}" for n in range(pzones)] + 
-                 [f"Wind{n}" for n in range(wzones)] +
-                 [f"PHP{n}" for n in range(nodes)] + 
-                 [f"PHE{n}" for n in range(nodes)] + 
-                 [f"HVI{n}" for n in range(nhvi)],
+                 [f"PV{n}" for n in range(solution_data.pzones)] + 
+                 [f"Wind{n}" for n in range(solution_data.wzones)] +
+                 [f"PHP{n}" for n in range(solution_data.nodes)] + 
+                 [f"PHE{n}" for n in range(solution_data.nodes)] + 
+                 [f"HVI{n}" for n in range(solution_data.nhvi)],
         resume=True,
         )
     
     x0 = _round_x(x0)
     
-    lb_p, ub_p = lb.copy(), ub.copy()
+    lb_p, ub_p = solution_data.lb.copy(), solution_data.ub.copy()
     lb_p[np.where(x0==0)[0]] = 0
     ub_p[np.where(x0==0)[0]] = 0
+    
+    cost_model = Raw_Costs(solution_data).CostFactors()
     
     starttime = dt.now()
     print("Polishing starts at", starttime)
     result = differential_evolution(
         func=ObjectiveWrapper,
         args=(
-            fileprinter,
+            solution_data,
             cost_model, 
-            parameters.y, 
-            parameters.p,
+            fileprinter,
             ),
         bounds=list(zip(lb_p, ub_p)),
         tol=0,
@@ -204,7 +199,7 @@ def Polish(
     timetaken = endtime - starttime
     print("Optimisation took", timetaken)
 
-    with open(f"Results/Optimisation_resultx{scenario}.csv", "a", newline="") as csvfile:
+    with open(f"Results/Optimisation_resultx{solution_data.scenario}.csv", "a", newline="") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(result.x)
 
@@ -212,7 +207,7 @@ def Polish(
 
 
 if __name__ == "__main__":
-    parameters = Parameters(y=1, p=False)
+    parameters = Parameters(s=21, y=1, p=False)
     hyperparameters = DE_Hyperparameters(
         i = 10, 
         p = 10, 
@@ -232,10 +227,13 @@ if __name__ == "__main__":
         f = 1,
         )
     
-    print(Objective(x0, cost_model, parameters.y, parameters.p))
+    solution_data = Solution_data(*parameters)
+    cost_model = Raw_Costs(solution_data).CostFactors()
     
-    result, time = Optimise(parameters, hyperparameters)
-    result, time = Polish(parameters, polish_hparameters)
+    print(Objective(solution_data.x0, solution_data, cost_model))
+    
+    result, time = Optimise(solution_data, hyperparameters)
+    result, time = Polish(result.x, solution_data, polish_hparameters)
 
 
 

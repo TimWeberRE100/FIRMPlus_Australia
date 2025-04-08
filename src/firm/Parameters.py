@@ -2,8 +2,13 @@ from dataclasses import dataclass
 
 @dataclass
 class Parameters:
+    s: int  # scenario
     y: int  # years
     p: bool # profiling
+    
+    def __iter__(self):
+        return iter((self.s, self.y, self.p))
+    
     
 @dataclass
 class DE_Hyperparameters:

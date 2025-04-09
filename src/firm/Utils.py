@@ -45,7 +45,6 @@ else:
     clock = ctypes.CDLL(__LIB).clock
     clock.argtypes = []
     
-    
     @njit
     def cclock():
-        return clock() / 10_000  # cpu-seconds?
+        return clock()  # cpu-cycles

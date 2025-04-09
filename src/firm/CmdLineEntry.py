@@ -4,7 +4,7 @@ from rich.console import Console # type: ignore
 from rich.text import Text # type: ignore
 from rich.table import Table # type: ignore
 from psutil import cpu_count
-from datetime import datetime as dt
+from time import perf_counter
 
 
 @click.command
@@ -51,15 +51,6 @@ def statistics(
     help="no. of years to model",
 )
 @click.option(
-    "-p", 
-    "--profiling", 
-    is_flag=True,
-    default=True,
-    required=False,   
-    show_default=True, 
-    help="include time profiling",
-)
-@click.option(
     "-n", 
     "--number", 
     default=3, 
@@ -80,191 +71,232 @@ def statistics(
 def benchmark(
     scenario: int,
     years: int,
-    profiling: bool,
     number: int, 
     evals: int, 
 ):
     
     print("Running Benchmarking...", end="")
-    from firm.Benchmark import profile, Benchmark
+    from firm.Benchmark import Benchmark
     from firm.Input import Solution_data
     from firm.Costs import Raw_Costs
-    from firm.Utils import zero_safe_division
     
     parameters = Parameters(scenario, years, False)
     sd = Solution_data(*parameters)
     cost_model = Raw_Costs(sd).CostFactors()
-    start = dt.now()
+    #compile
+    Benchmark(2, sd, cost_model)
+    start = perf_counter()
     for i in range(number): 
         Benchmark(evals, sd, cost_model)
-    time = dt.now() - start
+    time = perf_counter() - start
     print(f"\rBenchmarking took {time/number} per parallel batch of {evals} ({time/number/evals} per eval).")
+
+@click.command
+@click.option(
+    "-s",
+    "--scenario",
+    default=21,
+    type=click.IntRange(0),
+    required=False,
+    show_default=True,
+    help="Scenario to run",
+)
+@click.option(
+    "-y", 
+    "--years", 
+    default=-1,
+    type=click.IntRange(-1), 
+    required=False,   
+    show_default=True, 
+    help="no. of years to model",
+)
+def profile(
+    scenario: int,
+    years: int,
+):
     print("Running Profiling...", end="")
-    if profiling is True:
-        parameters = Parameters(scenario, years, True)
-        sd = Solution_data(*parameters)
-        cost_model = Raw_Costs(sd).CostFactors()
-        
-        solution = profile(sd.x0, sd, cost_model, False)
-        print("\r", " "*25, "\r")
-        table = Table(title="Profile Results")
-        
-        table.add_column("Function")
-        table.add_column("Calls")
-        table.add_column("Time")
-        table.add_column("Time per call")
-        
-        table.add_row(
-            "Transmission", 
-            str(solution.calls_transmission), 
-            str(solution.time_transmission), 
-            str(zero_safe_division(
-                solution.time_transmission,
-                solution.calls_transmission)), 
-            )
-        table.add_row(
-            "Flexible",
-            str(solution.calls_backfill), 
-            str(solution.time_backfill), 
-            str(zero_safe_division(
-                solution.time_backfill,
-                solution.calls_backfill)),
-            )
-        table.add_row(
-            "Basic Sim",
-            str(solution.calls_basic), 
-            str(solution.time_basic), 
-            str(zero_safe_division(
-                solution.time_basic,
-                solution.calls_basic)), 
-            )
-        table.add_row(
-            "Interconnection",
-            str(solution.calls_interconnection0
-                +solution.calls_interconnection1
-                +solution.calls_interconnection2
-                +solution.calls_interconnection3), 
-            str(solution.time_interconnection0
-                +solution.time_interconnection1
-                +solution.time_interconnection2
-                +solution.time_interconnection3), 
-            str(zero_safe_division(
-                solution.time_interconnection0
-                +solution.time_interconnection1
-                +solution.time_interconnection2
-                +solution.time_interconnection3,
-                solution.calls_interconnection0
-                +solution.calls_interconnection1
-                +solution.calls_interconnection2
-                +solution.calls_interconnection3)), 
-            )
-        table.add_row(
-            "Interconnection0",
-            str(solution.calls_interconnection0),
-            str(solution.time_interconnection0),
-            str(zero_safe_division(
-                solution.time_interconnection0, 
-                solution.calls_interconnection0)),
-            )
-        table.add_row(
-            "Interconnection1",
-            str(solution.calls_interconnection1),
-            str(solution.time_interconnection1),
-            str(zero_safe_division(
-                solution.time_interconnection1,
-                solution.calls_interconnection1)),
-            )
-        table.add_row(
-            "Interconnection2",
-            str(solution.calls_interconnection2),
-            str(solution.time_interconnection2),
-            str(zero_safe_division(
-                solution.time_interconnection2,
-                solution.calls_interconnection2)),
-            )
-        table.add_row(
-            "Interconnection3",
-            str(solution.calls_interconnection3),
-            str(solution.time_interconnection3),
-            str(zero_safe_division(
-                solution.time_interconnection3,
-                solution.calls_interconnection3)),
-            )
-        table.add_row(
-            "storage behav",
-            str(solution.calls_storage_behavior), 
-            str(solution.time_storage_behavior), 
-            str(zero_safe_division(
-                solution.time_storage_behavior,
-                solution.calls_storage_behavior)), 
-            )
-        table.add_row(
-            "storage behav t",
-            str(solution.calls_storage_behaviort), 
-            str(solution.time_storage_behaviort), 
-            str(zero_safe_division(
-                solution.time_storage_behaviort,
-                solution.calls_storage_behaviort)), 
-            )
-        table.add_row(
-            "spill/def",
-            str(solution.calls_spilldef), 
-            str(solution.time_spilldef), 
-            str(zero_safe_division(
-                solution.time_spilldef,
-                solution.calls_spilldef)), 
-            )
-        table.add_row(
-            "spill/def t",
-            str(solution.calls_spilldeft), 
-            str(solution.time_spilldeft), 
-            str(zero_safe_division(
-                solution.time_spilldeft,
-                solution.calls_spilldeft)), 
-            )
-        table.add_row(
-            "soc",
-            str(solution.calls_update_soc),
-            str(solution.time_update_soc),
-            str(zero_safe_division(
-                solution.time_update_soc,
-                solution.calls_update_soc)),
-            )
-        table.add_row(
-            "soc t",
-            str(solution.calls_update_soct), 
-            str(solution.time_update_soct), 
-            str(zero_safe_division(
-                solution.time_update_soct,
-                solution.calls_update_soct)), 
-            )
-        table.add_row(
-            "unbalanced",
-            str(solution.calls_unbalanced), 
-            str(solution.time_unbalanced), 
-            str(zero_safe_division(
-                solution.time_unbalanced,
-                solution.calls_unbalanced)), 
-            )
-        table.add_row(
-            "unbalanced t",
-            str(solution.calls_unbalancedt),
-            str(solution.time_unbalancedt),
-            str(zero_safe_division(
-                solution.time_unbalancedt,
-                solution.calls_unbalancedt)),
-            )
-        table.add_row(
-            "LCOE",
-            str(solution.LCOE), "-", "-",
-            )
-        table.add_row(
-            "Penalties",
-            str(solution.Penalties), "-", "-", 
-            )
-        print("\r", " "*30, sep='', end="")
-        console = Console()
-        console.print(table)
+    from firm.Benchmark import profile
+    from firm.Input import Solution_data
+    from firm.Costs import Raw_Costs
+    from firm.Utils import zero_safe_division
+    parameters = Parameters(scenario, years, True)
+    sd = Solution_data(*parameters)
+    cost_model = Raw_Costs(sd).CostFactors()
+    
+    solution, time, ctwt = profile(sd.x0, sd, cost_model, False) # compile
+    solution, time, ctwt = profile(sd.x0, sd, cost_model, False)
+    ctwt = ctwt*1000 # seconds to microseconds
+    print("\r", " "*25, "\r")
+    print('Warning: profile measure cpu-time. Tables units is wall-time apportioned over cpu-cycles')
+    table = Table(title="Profile Results")
+    
+    table.add_column("Function")
+    table.add_column("Calls")
+    table.add_column("Time (ms)")
+    table.add_column("Time per call")
+    
+    table.add_row(
+        "Transmission", 
+        str(solution.calls_transmission), 
+        str(ctwt*solution.time_transmission), 
+        str(ctwt*zero_safe_division(
+            solution.time_transmission,
+            solution.calls_transmission)), 
+        )
+    table.add_row(
+        "Flexible",
+        str(solution.calls_backfill), 
+        str(ctwt*solution.time_backfill), 
+        str(ctwt*zero_safe_division(
+            solution.time_backfill,
+            solution.calls_backfill)),
+        )
+    # table.add_row(
+    #     "Basic Sim",
+    #     str(solution.calls_basic), 
+    #     str(ctwt*solution.time_basic), 
+    #     str(ctwt*zero_safe_division(
+    #         solution.time_basic,
+    #         solution.calls_basic)), 
+    #     )
+    table.add_row(
+        "Interconnection",
+        str(solution.calls_interconnection0
+            +solution.calls_interconnection1
+            +solution.calls_interconnection2
+            +solution.calls_interconnection3), 
+        str(ctwt*(solution.time_interconnection0
+            +solution.time_interconnection1
+            +solution.time_interconnection2
+            +solution.time_interconnection3)), 
+        str(ctwt*zero_safe_division(
+            solution.time_interconnection0
+            +solution.time_interconnection1
+            +solution.time_interconnection2
+            +solution.time_interconnection3,
+            solution.calls_interconnection0
+            +solution.calls_interconnection1
+            +solution.calls_interconnection2
+            +solution.calls_interconnection3)), 
+        )
+    table.add_row(
+        "Interconnection0",
+        str(solution.calls_interconnection0),
+        str(ctwt*solution.time_interconnection0),
+        str(ctwt*zero_safe_division(
+            solution.time_interconnection0, 
+            solution.calls_interconnection0)),
+        )
+    table.add_row(
+        "Interconnection1",
+        str(solution.calls_interconnection1),
+        str(ctwt*solution.time_interconnection1),
+        str(ctwt*zero_safe_division(
+            solution.time_interconnection1,
+            solution.calls_interconnection1)),
+        )
+    table.add_row(
+        "Interconnection2",
+        str(solution.calls_interconnection2),
+        str(ctwt*solution.time_interconnection2),
+        str(ctwt*zero_safe_division(
+            solution.time_interconnection2,
+            solution.calls_interconnection2)),
+        )
+    table.add_row(
+        "Interconnection3",
+        str(solution.calls_interconnection3),
+        str(ctwt*solution.time_interconnection3),
+        str(ctwt*zero_safe_division(
+            solution.time_interconnection3,
+            solution.calls_interconnection3)),
+        )
+    table.add_row(
+        "storage behav",
+        str(solution.calls_storage_behavior), 
+        str(ctwt*solution.time_storage_behavior), 
+        str(ctwt*zero_safe_division(
+            solution.time_storage_behavior,
+            solution.calls_storage_behavior)), 
+        )
+    table.add_row(
+        "storage behav t",
+        str(solution.calls_storage_behaviort), 
+        str(ctwt*solution.time_storage_behaviort), 
+        str(ctwt*zero_safe_division(
+            solution.time_storage_behaviort,
+            solution.calls_storage_behaviort)), 
+        )
+    table.add_row(
+        "spill/def",
+        str(solution.calls_spilldef), 
+        str(ctwt*solution.time_spilldef), 
+        str(ctwt*zero_safe_division(
+            solution.time_spilldef,
+            solution.calls_spilldef)), 
+        )
+    table.add_row(
+        "spill/def t",
+        str(solution.calls_spilldeft), 
+        str(ctwt*solution.time_spilldeft), 
+        str(ctwt*zero_safe_division(
+            solution.time_spilldeft,
+            solution.calls_spilldeft)), 
+        )
+    table.add_row(
+        "soc",
+        str(solution.calls_update_soc),
+        str(ctwt*solution.time_update_soc),
+        str(ctwt*zero_safe_division(
+            solution.time_update_soc,
+            solution.calls_update_soc)),
+        )
+    table.add_row(
+        "soc t",
+        str(solution.calls_update_soct), 
+        str(ctwt*solution.time_update_soct), 
+        str(ctwt*zero_safe_division(
+            solution.time_update_soct,
+            solution.calls_update_soct)), 
+        )
+    table.add_row(
+        "unbalanced",
+        str(solution.calls_unbalanced), 
+        str(ctwt*solution.time_unbalanced), 
+        str(ctwt*zero_safe_division(
+            solution.time_unbalanced,
+            solution.calls_unbalanced)), 
+        )
+    table.add_row(
+        "unbalanced t",
+        str(solution.calls_unbalancedt),
+        str(ctwt*solution.time_unbalancedt),
+        str(ctwt*zero_safe_division(
+            solution.time_unbalancedt,
+            solution.calls_unbalancedt)),
+        )
+    
+    print("\r", " "*30, sep='', end="")
+    results = Table(title="Solution Result")
+    results.add_column("")
+    results.add_column("Value")
+    results.add_row(
+        "LCOE",
+        str(solution.LCOE),
+        )
+    results.add_row(
+        "Penalties",
+        str(solution.Penalties),
+        )
+    results.add_row(
+        "Wall-time", 
+        str(time),
+    )
+
+
+    console = Console()
+    console.print(table)
+    console.print(results)
 
 
 
@@ -552,6 +584,7 @@ def Entry():
     pass
 
 Entry.add_command(benchmark)
+Entry.add_command(profile)
 Entry.add_command(optimise)
 Entry.add_command(polish)
 Entry.add_command(statistics)

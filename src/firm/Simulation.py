@@ -22,6 +22,10 @@ def Simulate(solution):
     UpdateUnbalanced(solution)
     UpdateSpillDef(solution)
     if solution.profiling:
+        time_adj = (solution.time_interconnection0+
+                    solution.time_interconnection1+
+                    solution.time_interconnection2+
+                    solution.time_interconnection3)
         start_backfill = cclock()
     fill = np.zeros(solution.nodes, np.float64)
     for t in range(solution.intervals - 1, -1, -1):
@@ -70,7 +74,11 @@ def Simulate(solution):
                 )
                 # fill adjusted in-place
     if solution.profiling:
-        solution.time_backfill += cclock() - start_backfill
+        time_adj -= (solution.time_interconnection0+
+                     solution.time_interconnection1+
+                     solution.time_interconnection2+
+                     solution.time_interconnection3) 
+        solution.time_backfill += cclock() - start_backfill + time_adj
         solution.calls_backfill +=1 
 
     BasicSimulate(solution)
@@ -79,6 +87,14 @@ def Simulate(solution):
 def TransmissionSimulate(solution):
     if solution.profiling:
         start_transmission = cclock()
+        time_adj = (solution.time_interconnection0+
+                    solution.time_interconnection1+
+                    solution.time_interconnection2+
+                    solution.time_interconnection3+
+                    solution.time_storage_behaviort+
+                    solution.time_spilldeft+
+                    solution.time_unbalancedt+
+                    solution.time_update_soct)
     for t in range(solution.intervals):
         # storage operation
         UpdateStoraget(solution, t)
@@ -115,7 +131,15 @@ def TransmissionSimulate(solution):
 
     if solution.MDeficit.sum() < 1e-6:
         if solution.profiling:
-            solution.time_transmission += cclock() - start_transmission
+            time_adj -= (solution.time_interconnection0+
+                    solution.time_interconnection1+
+                    solution.time_interconnection2+
+                    solution.time_interconnection3+
+                    solution.time_storage_behaviort+
+                    solution.time_spilldeft+
+                    solution.time_unbalancedt+
+                    solution.time_update_soct)
+            solution.time_transmission += cclock() - start_transmission + time_adj
             solution.calls_transmission +=1
         return
 
@@ -132,26 +156,35 @@ def TransmissionSimulate(solution):
             Interconnection(solution, fill, solution.MSpillage[t], solution.TImport[t], solution.TExport[t])
             # fill adjusted in-place
         fill += solution.MDeficit[t] / solution.efficiency
-    # fix storage traces
-    BasicSimulate(solution)
 
     if solution.profiling:
-        solution.time_transmission += cclock() - start_transmission
+        time_adj -= (solution.time_interconnection0+
+                    solution.time_interconnection1+
+                    solution.time_interconnection2+
+                    solution.time_interconnection3+
+                    solution.time_storage_behaviort+
+                    solution.time_spilldeft+
+                    solution.time_unbalancedt+
+                    solution.time_update_soct)
+        solution.time_transmission += cclock() - start_transmission + time_adj
         solution.calls_transmission +=1 
+
+    # fix storage traces
+    BasicSimulate(solution)
 
 
 @njit
 def BasicSimulate(solution):
-    if solution.profiling:
-        start_basic = cclock()
+    # if solution.profiling:
+    #     start_basic = cclock()
     solution.MStorage[-1] = 0.5 * solution.CPHS 
     UpdateUnbalanced(solution)
     UpdateStorage(solution)
     UpdateSOC(solution)
-    UpdateSpillDef(solution)
-    if solution.profiling:
-        solution.time_basic += cclock() - start_basic
-        solution.calls_basic +=1 
+    # UpdateSpillDef(solution)
+    # if solution.profiling:
+    #     solution.time_basic += cclock() - start_basic
+    #     solution.calls_basic +=1 
 
 
 @njit

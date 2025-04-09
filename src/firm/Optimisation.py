@@ -110,7 +110,7 @@ def Optimise(solution_data, hyperparameters):
         x0=solution_data.x0,
         vectorized=True
     )
-
+    fileprinter.Terminate()
     endtime = dt.now()
     timetaken = endtime - starttime
     print("Optimisation took", timetaken)
@@ -137,7 +137,7 @@ def _round_x(x0, solution_data, cost_model):
                 # set to 0
                 _x[j] = 0
                 # evaluate
-                re = Objective(_x, cost_model)
+                re = Objective(_x, solution_data, cost_model)
                 if re <= elite: 
                     # if no penalties, update x0
                     x0[j] = 0 
@@ -161,15 +161,15 @@ def Polish(
                  [f"HVI{n}" for n in range(solution_data.nhvi)],
         resume=True,
         )
-    
-    x0 = _round_x(x0)
+
+    cost_model = Raw_Costs(solution_data).CostFactors()
+
+    x0 = _round_x(x0, solution_data, cost_model)
     
     lb_p, ub_p = solution_data.lb.copy(), solution_data.ub.copy()
     lb_p[np.where(x0==0)[0]] = 0
     ub_p[np.where(x0==0)[0]] = 0
-    
-    cost_model = Raw_Costs(solution_data).CostFactors()
-    
+
     starttime = dt.now()
     print("Polishing starts at", starttime)
     result = differential_evolution(
@@ -195,6 +195,7 @@ def Polish(
         x0=x0,
         vectorized=True
     )
+    fileprinter.Terminate()
     endtime = dt.now()
     timetaken = endtime - starttime
     print("Optimisation took", timetaken)

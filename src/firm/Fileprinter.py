@@ -35,14 +35,14 @@ class Fileprinter:
         if self.save_freq == 0:
             return
         self.callno+=1     
-        self._print(self, arr)
+        self._print(arr)
         
         if self.callno % self.save_freq == 0:
             self._commit()
     
-    def _print(self):
+    def _print(self, arr):
         with open(self.temp_file_path, 'a', newline='') as file:
-            writer(file).writerows(self.array) 
+            writer(file).writerows(arr) 
             file.close()
     
     def _copyfile(self, forward=True):
@@ -54,7 +54,6 @@ class Fileprinter:
                     pass
                 else: 
                     raise e 
-                    
         else:
            copyfile(self.temp_file_path, self.file_name)
            
@@ -62,7 +61,6 @@ class Fileprinter:
         print('\rWriting out to file. Do not interrupt', end='\r')
         self._copyfile(False)
         print('\r'+' '*40, end='\r')
-        self.array=None
     
     def _createfile(self, header):
         with open(self.file_name, 'w', newline='') as file:

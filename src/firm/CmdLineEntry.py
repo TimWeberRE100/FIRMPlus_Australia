@@ -1,8 +1,8 @@
 import click
 from firm.Parameters import Parameters, DE_Hyperparameters
-from rich.console import Console
-from rich.text import Text
-from rich.table import Table
+from rich.console import Console # type: ignore
+from rich.text import Text # type: ignore
+from rich.table import Table # type: ignore
 from psutil import cpu_count
 from datetime import datetime as dt
 
@@ -85,7 +85,7 @@ def benchmark(
     evals: int, 
 ):
     
-    print("\nRunning Benchmarking...", end="")
+    print("Running Benchmarking...", end="")
     from firm.Benchmark import profile, Benchmark
     from firm.Input import Solution_data
     from firm.Costs import Raw_Costs
@@ -98,8 +98,8 @@ def benchmark(
     for i in range(number): 
         Benchmark(evals, sd, cost_model)
     time = dt.now() - start
-    print(f"\rBenchmarking took {time/number} per parallel batch of {evals}.")
-    print("\nRunning Profiling...", end="")
+    print(f"\rBenchmarking took {time/number} per parallel batch of {evals} ({time/number/evals} per eval).")
+    print("Running Profiling...", end="")
     if profiling is True:
         parameters = Parameters(scenario, years, True)
         sd = Solution_data(*parameters)
@@ -393,7 +393,8 @@ def optimise(
     from firm.Optimisation import Optimise
     
     solution_data = Solution_data(*param)
-    Optimise(solution_data, hyperparam)
+    result, time = Optimise(solution_data, hyperparam)
+    print(result.x)
 
 @click.command
 @click.option(
@@ -450,7 +451,6 @@ def optimise(
     required=False, 
     help="Mutation factor dither range (overrides --mutation)"
     )
-
 @click.option(
     "-r", 
     "--recombination", 
@@ -528,10 +528,11 @@ def polish(
     
     solution_data = Solution_data(*param)
     
-    Polish(x0, solution_data, hyperparam)
+    result, time = Polish(x0, solution_data, hyperparam)
+    print(result.x)
 
-@click.group
-def Entry():
+@click.command
+def info():
     console = Console()
     text = Text(
         r"""
@@ -546,9 +547,13 @@ def Entry():
     version_string = "Version 0.0.1"
     console.print(version_string, style="cornflower_blue")
 
+@click.group
+def Entry():
+    pass
+
 Entry.add_command(benchmark)
 Entry.add_command(optimise)
 Entry.add_command(polish)
 Entry.add_command(statistics)
-
+Entry.add_command(info)
 

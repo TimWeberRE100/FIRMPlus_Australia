@@ -38,7 +38,7 @@ if platform.system() == "Windows":
     clock.argtypes = []
     @njit
     def cclock():
-        return clock()/1000 #cpu-seconds
+        return clock() #cpu-cycles
  
 else:
     __LIB = find_library("c")

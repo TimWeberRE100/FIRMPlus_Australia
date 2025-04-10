@@ -181,7 +181,7 @@ def BasicSimulate(solution):
     UpdateUnbalanced(solution)
     UpdateStorage(solution)
     UpdateSOC(solution)
-    # UpdateSpillDef(solution)
+    UpdateSpillDef(solution)
     # if solution.profiling:
     #     solution.time_basic += cclock() - start_basic
     #     solution.calls_basic +=1 

@@ -114,6 +114,7 @@ def profile(
     scenario: int,
     years: int,
 ):
+    #%%
     print("Running Profiling...", end="")
     from firm.Benchmark import profile
     from firm.Input import Solution_data
@@ -298,7 +299,7 @@ def profile(
     console.print(table)
     console.print(results)
 
-
+#%%
 
 @click.command
 @click.option(

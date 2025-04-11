@@ -362,10 +362,11 @@ class Solution:
         self.energy = sd.energy
         
         self.Nodel_int = sd.Nodel_int
+        # self.PVl_int, self.Windl_int = sd.PVl_int, sd.Windl_int
         self.network_mask = sd.network_mask
         self.network = sd.network
         self.basic_network = sd.basic_network
-        # self.directconns = directconns
+        # self.directconns = sd.directconns
         self.triangulars = sd.triangulars
         self.networksteps = np.where(self.triangulars == self.network.shape[2])[0][0]
         self.trans_mask = sd.trans_mask
@@ -374,7 +375,6 @@ class Solution:
 
         self.Flex_res = 20000 / self.resolution * self.years
 
-        # self.PVl_int, self.Windl_int = PVl_int, Windl_int
 
         self.CPV =   x[        : sd.pidx]
         self.CWind = x[sd.pidx : sd.widx]
@@ -526,7 +526,7 @@ def Evaluate(S, cost_model):
     S.LCOBL = S.LCOE - S.LCOG - S.LCOBS - S.LCOBT
     S.LCOB = S.LCOBS + S.LCOBT + S.LCOBL
 
-    S.CAPEX = sum([cost[i] for i in [0, 1, 2, 3, 10, 11, 14, 15, 16, 17, 18, 19, 20, 21]]) / S.energy
+    S.CAPEX = sum([cost[i] for i in [0, 1, 2, 3, 10, 11, 15, 18]]) / S.energy
     S.OPEX = S.LCOE - S.CAPEX
 
     return S.LCOE, S.Penalties

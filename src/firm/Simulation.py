@@ -12,7 +12,7 @@ from firm.Interconnection import Interconnection
 from firm.Utils import cclock
 
 
-@njit
+# @njit
 def Simulate(solution):
 
     TransmissionSimulate(solution)
@@ -83,7 +83,7 @@ def Simulate(solution):
 
     BasicSimulate(solution)
 
-@njit
+# @njit
 def TransmissionSimulate(solution):
     if solution.profiling:
         start_transmission = cclock()

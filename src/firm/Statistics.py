@@ -11,9 +11,6 @@ import numpy as np
 from firm.Input import (
     Evaluate,
     Solution,
-    firstyear,
-    cost_model,
-    x0,
 )
 from firm.Simulation import Simulate
 from firm.Utils import zero_safe_division
@@ -64,14 +61,14 @@ def Debug(solution):
         assert solution.MPV.sum(axis=1).max() <= solution.CPV.sum()
         assert solution.MWind.sum(axis=1).max() <= solution.CWind.sum()
     
-        inter_lines = (solution.TImport + solution.TExport).sum(axis=2)
-        inter_nodes = (solution.TImport + solution.TExport).sum(axis=1)
+        assert ((solution.TImport.sum(axis=2) + solution.TExport.sum(axis=2)) < 0.001).all, "import/export imbalance (lines)"
+        assert ((solution.TImport.sum(axis=1) + solution.TExport.sum(axis=1)) < 0.001).all, "import/export imbalance (nodes)"
     
         assert (solution.TImport.sum(axis=2).max(axis=0) - solution.CHVI <= 0.001).all(), "HVI bounds"
-        assert (solution.TImport.min(axis=2) >= -0.001).all(), "HVI bounds"
+        assert (solution.TImport.min(axis=2).min(axis=0) >= -0.001).all(), "HVI bounds"
     
-        assert (solution.TExport.min(axis=2) + solution.CHVI >= -0.001).all(), "HVI bounds"
-        assert (solution.TExport.max(axis=2) <= 0.001).all(), "HVI bounds"
+        assert (solution.TExport.min(axis=2).min(axis=0) + solution.CHVI >= -0.001).all(), "HVI bounds"
+        assert (solution.TExport.max(axis=2).max(axis=0) <= 0.001).all(), "HVI bounds"
     
         assert (solution.MDischarge.max(axis=0) - solution.CPHP <= 0.001).all(), "Phes Discharge"
         assert (solution.MCharge.max(axis=0) - solution.CPHP <= 0.001).all(), "Phes Charge"

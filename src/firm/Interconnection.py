@@ -9,9 +9,7 @@ Created on Wed Oct  9 07:51:51 2024
 import numpy as np
 from numba import njit  # type: ignore
 
-from firm.Utils import cclock, array_min, array_max # type: ignore
-
-triangulars = np.array([0, 1, 3, 6, 10, 15, 21])
+from firm.Utils import cclock, array_min, array_max_2d_axis1, array_sum_2d_axis0 # type: ignore
 
 
 @njit
@@ -38,7 +36,7 @@ def get_nthary_donors(solution, n, leg):
     if cache_result is not None:
         return cache_result
     
-    result = solution.network[:, n, triangulars[leg] : triangulars[leg + 1], :]
+    result = solution.network[:, n, solution.triangulars[leg] : solution.triangulars[leg + 1], :]
     result = result[:, :, result[0, 0, :] != -1]
     cache[n] = result
     return result
@@ -59,7 +57,7 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
     for n in range(solution.nodes):
         if Fillt[n] < 1e-6:
             continue
-                # appropriate slice of network array
+        # appropriate slice of network array
         # pdonors is equivalent to donors later on but has different ndim so needs to
         #   be a different variable name for static typing
         pdonors, pdonor_lines = get_primary_donors(solution, n)
@@ -70,8 +68,9 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
         # maximum exportable
         _transmission[pdonors] = np.minimum(
             Surplust[pdonors],  # power resource constraint
-            solution.CHVI[pdonor_lines] - Importt[pdonor_lines, :].sum(axis=1), # line capacity constraint
+            solution.CHVI[pdonor_lines] - array_sum_2d_axis0(Importt[:, pdonor_lines]), # line capacity constraint
         )  
+
         # scale down to fill requirement
         _transmission /= max(1, _transmission.sum() / Fillt[n])
 
@@ -80,8 +79,8 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
 
         for d, l in zip(pdonors, pdonor_lines):  #  print(d,l)
             # record transmission
-            Importt[l, n] += _transmission[d]
-            Exportt[l, d] -= _transmission[d]
+            Importt[n, l] += _transmission[d]
+            Exportt[d, l] -= _transmission[d]
 
         # adjust deficit
         Fillt[n] -= _transmission.sum()
@@ -109,33 +108,35 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
                 if Surplust[donors[-1]].sum() < 1e-6:
                     continue
 
-                _capacity[:] = solution.CHVI - Importt.sum(axis=1)
+                _capacity[:] = solution.CHVI - array_sum_2d_axis0(Importt)
                 for d, dl in zip(donors[-1], donor_lines.T): # print(d,dl)
-                    # power use of each line
-                    hc = array_min(_capacity[dl])
-                    _import[dl, d] = min(hc, Surplust[d])
+                    # power use of each line, clipped to maximum capacity of lowest leg
+                    _import[d, dl] = min(array_min(_capacity[dl]), Surplust[d])
                 
                 for l in range(solution.nhvi):
-                    usage = _import[l, :].sum()
-                    if usage > _capacity[l]:
+                    # total usage of the line across all import paths
+                    _usage=0.0
+                    for m in range(solution.nodes):
+                        _usage += _import[m, l]
+                    # if usage exceeds capacity
+                    if _usage > _capacity[l]:
                         for m in range(solution.nodes):
-                            if _import[l, m] > 1e-6:
-                                _import[:, m] *= _capacity[l]/usage
+                            # clip all legs
+                            if _import[m, l] > 1e-6:
+                                _import[m, :] *= _capacity[l]/_usage
                     
                 # intermediate calculation array
-                ## take array_max instead?
-                # _transmission = _import.sum(axis=0) / (leg+1)
-                _transmission = np.array([array_max(col) for col in _import.T])
-               
+                _transmission = array_max_2d_axis1(_import)
+                
                 # scale down to fill requirement
                 _transmission /= max(1, _transmission.sum() / Fillt[n])
 
                 for nd, d, dl in zip(range(donors.shape[1]), donors[-1], donor_lines.T): # print(nd, d, dl)
-                    Importt[dl[0], n] += _transmission[d]
-                    Exportt[dl[0], donors[0, nd]] -= _transmission[d]
+                    Importt[n, dl[0]] += _transmission[d]
+                    Exportt[donors[0, nd], dl[0]] -= _transmission[d]
                     for step in range(leg):
-                        Importt[dl[step+1], donors[step, nd]] += _transmission[d]
-                        Exportt[dl[step+1], donors[step+1, nd]] -= _transmission[d]
+                        Importt[donors[step, nd], dl[step+1]] += _transmission[d]
+                        Exportt[donors[step+1, nd], dl[step+1]] -= _transmission[d]
 
                 # Adjust fill and surplus
                 Fillt[n] -= _transmission.sum()

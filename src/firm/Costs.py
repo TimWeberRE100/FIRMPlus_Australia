@@ -386,7 +386,7 @@ class Cost_Factors:
         self.hvi = self.hvi.T
 
 if __name__=='__main__':
-    from firm.parameters import Parameters
+    from firm.Parameters import Parameters
     from firm.Input import Solution_data
     parameters = Parameters(21, 1, False)
     sd = Solution_data(*parameters)

@@ -444,8 +444,8 @@ class Solution:
         self.MStorage = np.zeros((self.intervals, self.nodes), dtype=np.float64)
         self.MStorage[-1] = 0.5 * self.CPHS
 
-        self.TImport = np.zeros((self.intervals, self.nhvi, self.nodes), dtype=np.float64)
-        self.TExport = np.zeros((self.intervals, self.nhvi, self.nodes), dtype=np.float64)
+        self.TImport = np.zeros((self.intervals, self.nodes, self.nhvi), dtype=np.float64)
+        self.TExport = np.zeros((self.intervals, self.nodes, self.nhvi), dtype=np.float64)
         self.TDC = np.zeros((self.intervals, self.nodes), dtype=np.float64)
 
 

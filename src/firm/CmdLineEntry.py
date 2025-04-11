@@ -133,12 +133,18 @@ def profile(
     
     table.add_column("Function")
     table.add_column("Calls")
-    table.add_column("Time (ms)")
+    table.add_column("Cpu-cycles")
+    table.add_column("Cpu-cycles per call")
+    table.add_column("Apportioned Time (ms)")
     table.add_column("Time per call")
     
     table.add_row(
         "Transmission", 
         str(solution.calls_transmission), 
+        str(solution.time_transmission), 
+        str(zero_safe_division(
+            solution.time_transmission,
+            solution.calls_transmission)), 
         str(ctwt*solution.time_transmission), 
         str(ctwt*zero_safe_division(
             solution.time_transmission,
@@ -147,6 +153,10 @@ def profile(
     table.add_row(
         "Flexible",
         str(solution.calls_backfill), 
+        str(solution.time_backfill), 
+        str(zero_safe_division(
+            solution.time_backfill,
+            solution.calls_backfill)),
         str(ctwt*solution.time_backfill), 
         str(ctwt*zero_safe_division(
             solution.time_backfill,
@@ -155,6 +165,10 @@ def profile(
     # table.add_row(
     #     "Basic Sim",
     #     str(solution.calls_basic), 
+    #     str(solution.time_basic), 
+    #     str(zero_safe_division(
+    #         solution.time_basic,
+    #         solution.calls_basic)), 
     #     str(ctwt*solution.time_basic), 
     #     str(ctwt*zero_safe_division(
     #         solution.time_basic,
@@ -166,6 +180,19 @@ def profile(
             +solution.calls_interconnection1
             +solution.calls_interconnection2
             +solution.calls_interconnection3), 
+        str((solution.time_interconnection0
+            +solution.time_interconnection1
+            +solution.time_interconnection2
+            +solution.time_interconnection3)), 
+        str(zero_safe_division(
+            solution.time_interconnection0
+            +solution.time_interconnection1
+            +solution.time_interconnection2
+            +solution.time_interconnection3,
+            solution.calls_interconnection0
+            +solution.calls_interconnection1
+            +solution.calls_interconnection2
+            +solution.calls_interconnection3)), 
         str(ctwt*(solution.time_interconnection0
             +solution.time_interconnection1
             +solution.time_interconnection2
@@ -183,6 +210,10 @@ def profile(
     table.add_row(
         "Interconnection0",
         str(solution.calls_interconnection0),
+        str(solution.time_interconnection0),
+        str(zero_safe_division(
+            solution.time_interconnection0, 
+            solution.calls_interconnection0)),
         str(ctwt*solution.time_interconnection0),
         str(ctwt*zero_safe_division(
             solution.time_interconnection0, 
@@ -191,6 +222,10 @@ def profile(
     table.add_row(
         "Interconnection1",
         str(solution.calls_interconnection1),
+        str(solution.time_interconnection1),
+        str(zero_safe_division(
+            solution.time_interconnection1,
+            solution.calls_interconnection1)),
         str(ctwt*solution.time_interconnection1),
         str(ctwt*zero_safe_division(
             solution.time_interconnection1,
@@ -199,6 +234,10 @@ def profile(
     table.add_row(
         "Interconnection2",
         str(solution.calls_interconnection2),
+        str(solution.time_interconnection2),
+        str(zero_safe_division(
+            solution.time_interconnection2,
+            solution.calls_interconnection2)),
         str(ctwt*solution.time_interconnection2),
         str(ctwt*zero_safe_division(
             solution.time_interconnection2,
@@ -207,6 +246,10 @@ def profile(
     table.add_row(
         "Interconnection3",
         str(solution.calls_interconnection3),
+        str(solution.time_interconnection3),
+        str(zero_safe_division(
+            solution.time_interconnection3,
+            solution.calls_interconnection3)),
         str(ctwt*solution.time_interconnection3),
         str(ctwt*zero_safe_division(
             solution.time_interconnection3,
@@ -215,6 +258,10 @@ def profile(
     table.add_row(
         "storage behav",
         str(solution.calls_storage_behavior), 
+        str(solution.time_storage_behavior), 
+        str(zero_safe_division(
+            solution.time_storage_behavior,
+            solution.calls_storage_behavior)), 
         str(ctwt*solution.time_storage_behavior), 
         str(ctwt*zero_safe_division(
             solution.time_storage_behavior,
@@ -223,6 +270,10 @@ def profile(
     table.add_row(
         "storage behav t",
         str(solution.calls_storage_behaviort), 
+        str(solution.time_storage_behaviort), 
+        str(zero_safe_division(
+            solution.time_storage_behaviort,
+            solution.calls_storage_behaviort)), 
         str(ctwt*solution.time_storage_behaviort), 
         str(ctwt*zero_safe_division(
             solution.time_storage_behaviort,
@@ -231,6 +282,10 @@ def profile(
     table.add_row(
         "spill/def",
         str(solution.calls_spilldef), 
+        str(solution.time_spilldef), 
+        str(zero_safe_division(
+            solution.time_spilldef,
+            solution.calls_spilldef)), 
         str(ctwt*solution.time_spilldef), 
         str(ctwt*zero_safe_division(
             solution.time_spilldef,
@@ -239,6 +294,10 @@ def profile(
     table.add_row(
         "spill/def t",
         str(solution.calls_spilldeft), 
+        str(solution.time_spilldeft), 
+        str(zero_safe_division(
+            solution.time_spilldeft,
+            solution.calls_spilldeft)), 
         str(ctwt*solution.time_spilldeft), 
         str(ctwt*zero_safe_division(
             solution.time_spilldeft,
@@ -247,6 +306,10 @@ def profile(
     table.add_row(
         "soc",
         str(solution.calls_update_soc),
+        str(solution.time_update_soc),
+        str(zero_safe_division(
+            solution.time_update_soc,
+            solution.calls_update_soc)),
         str(ctwt*solution.time_update_soc),
         str(ctwt*zero_safe_division(
             solution.time_update_soc,
@@ -255,6 +318,10 @@ def profile(
     table.add_row(
         "soc t",
         str(solution.calls_update_soct), 
+        str(solution.time_update_soct), 
+        str(zero_safe_division(
+            solution.time_update_soct,
+            solution.calls_update_soct)), 
         str(ctwt*solution.time_update_soct), 
         str(ctwt*zero_safe_division(
             solution.time_update_soct,
@@ -263,6 +330,10 @@ def profile(
     table.add_row(
         "unbalanced",
         str(solution.calls_unbalanced), 
+        str(solution.time_unbalanced), 
+        str(zero_safe_division(
+            solution.time_unbalanced,
+            solution.calls_unbalanced)), 
         str(ctwt*solution.time_unbalanced), 
         str(ctwt*zero_safe_division(
             solution.time_unbalanced,
@@ -271,6 +342,10 @@ def profile(
     table.add_row(
         "unbalanced t",
         str(solution.calls_unbalancedt),
+        str(solution.time_unbalancedt),
+        str(zero_safe_division(
+            solution.time_unbalancedt,
+            solution.calls_unbalancedt)),
         str(ctwt*solution.time_unbalancedt),
         str(ctwt*zero_safe_division(
             solution.time_unbalancedt,

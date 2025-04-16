@@ -16,6 +16,13 @@ from firm.Fileprinter import Fileprinter
 
 def ObjectiveWrapper(xs, solution_data, cost_model, fileprinter):
     result = ObjectiveParallel(xs.T, solution_data, cost_model)
+    if np.isnan(result).any():
+        fileprinter(np.vstack((np.atleast_2d(result), xs)).T) 
+        fileprinter.Terminate()
+        print(xs)
+        print(np.where(np.isnan(result)))
+        print(result)
+        raise Exception
     fileprinter(np.vstack((np.atleast_2d(result), xs)).T) 
     return result
  

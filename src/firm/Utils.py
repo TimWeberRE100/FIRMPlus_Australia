@@ -6,6 +6,58 @@ def zero_safe_division(numerator, denominator, error=0):
     return error if denominator == 0 else numerator / denominator
 
 @njit
+def itemwise_minimum_2d_0d(arr1, scal, retarr):
+    for i in range(retarr.shape[0]):
+        for j in range(retarr.shape[1]):
+            retarr[i, j] = min(arr1[i, j], scal)
+    return retarr
+
+@njit
+def itemwise_maximum_2d_0d(arr1, scal, retarr):
+    for i in range(retarr.shape[0]):
+        for j in range(retarr.shape[1]):
+            retarr[i, j] = max(arr1[i, j], scal)
+    return retarr
+
+@njit
+def itemwise_minimum_2d_1d(arr1, arr2, retarr):
+    for i in range(retarr.shape[0]):
+        for j in range(retarr.shape[1]):
+            retarr[i, j] = min(arr1[i, j], arr2[j])
+    return retarr
+
+@njit
+def itemwise_maximum_2d_1d(arr1, arr2, retarr):
+    for i in range(retarr.shape[0]):
+        for j in range(retarr.shape[1]):
+            retarr[i, j] = max(arr1[i, j], arr2[j])
+    return retarr
+
+@njit
+def itemwise_minimum_1d_1d(arr1, arr2, retarr):
+    for i in range(len(retarr)):
+        retarr[i] = min(arr1[i], arr2[i])
+    return retarr
+
+@njit
+def itemwise_maximum_1d_1d(arr1, arr2, retarr):
+    for i in range(len(retarr)):
+        retarr[i] = max(arr1[i], arr2[i])
+    return retarr
+
+@njit
+def itemwise_minimum_1d_0d(arr1, scal, retarr):
+    for i in range(len(retarr)):
+        retarr[i] = min(arr1[i], scal)
+    return retarr
+
+@njit
+def itemwise_maximum_1d_0d(arr1, scal, retarr):
+    for i in range(len(retarr)):
+        retarr[i] = max(arr1[i], scal)
+    return retarr
+
+@njit
 def array_sum_2d_axis0(arr):
     """like np.ndarray.sum(axis=0)"""
     ret = np.zeros(arr.shape[1], arr.dtype)

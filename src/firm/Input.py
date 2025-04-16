@@ -5,7 +5,7 @@ from numba.experimental import jitclass  # type: ignore
 from numba.typed.typeddict import Dict as TypedDict
 
 from firm.Simulation import Simulate
-from firm.Utils import zero_safe_division, array_max
+from firm.Utils import zero_safe_division, array_max, cclock
 from firm.Network import generate_network
 
 
@@ -309,6 +309,7 @@ solution_spec = [
     ("cache_quaternary_donors", types.DictType(int64, int64[:, :, :])),
     
     ("profiling", boolean),
+    ('profile_overhead', float64),
     # time profiling
     ("time_transmission", int64),
     ("time_backfill", int64),
@@ -398,23 +399,24 @@ class Solution:
         self.cache_tertiary_donors = TypedDict.empty(int64, int64[:, :, :])
         self.cache_quaternary_donors = TypedDict.empty(int64, int64[:, :, :])
         
+        self.profile_overhead=0.0
         self.profiling = sd.profiling
         if self.profiling:
-            self.time_transmission = 0.0
-            self.time_backfill = 0.0
-            self.time_basic = 0.0
-            self.time_interconnection0 = 0.0
-            self.time_interconnection1 = 0.0
-            self.time_interconnection2 = 0.0
-            self.time_interconnection3 = 0.0
-            self.time_storage_behavior = 0.0
-            self.time_storage_behaviort = 0.0
-            self.time_spilldef = 0.0
-            self.time_spilldeft = 0.0
-            self.time_update_soc = 0.0
-            self.time_update_soct = 0.0
-            self.time_unbalancedt = 0.0
-            self.time_unbalanced = 0.0
+            self.time_transmission = 0
+            self.time_backfill = 0
+            self.time_basic = 0
+            self.time_interconnection0 = 0
+            self.time_interconnection1 = 0
+            self.time_interconnection2 = 0
+            self.time_interconnection3 = 0
+            self.time_storage_behavior = 0
+            self.time_storage_behaviort = 0
+            self.time_spilldef = 0
+            self.time_spilldeft = 0
+            self.time_update_soc = 0
+            self.time_update_soct = 0
+            self.time_unbalancedt = 0
+            self.time_unbalanced = 0
             
             self.calls_transmission = 0
             self.calls_backfill = 0
@@ -431,6 +433,14 @@ class Solution:
             self.calls_update_soct = 0
             self.calls_unbalancedt = 0
             self.calls_unbalanced = 0
+
+            self.profile_overhead = 0.0
+            for _ in range(10000):
+                start=cclock()
+                self.calls_transmission += 1
+                self.profile_overhead += cclock()-start
+            self.calls_transmission += 1
+            self.profile_overhead/=10000
         
     def _instantiate_operations(self):
         self.MNetload = self.MLoad - self.MPV - self.MWind - self.CBaseload

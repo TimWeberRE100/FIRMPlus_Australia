@@ -35,8 +35,18 @@ def profile(x,
     Evaluate(solution, cost_model)
     time = perf_counter() - start
 
+    profiles = [item[5:] for item in dir(solution) if item.startswith('time_')]
+    for item in profiles:
+        setattr(
+            solution, 
+            'time_'+item, 
+            getattr(solution, 'time_'+item) - solution.profile_overhead*getattr(solution, 'calls_'+item)
+            )
+
     cputime = sum((getattr(solution, item) for item in dir(solution) if item.startswith('time_')))
-    ctwt = time/cputime
+    profiletime = sum((getattr(solution, item) for item in dir(solution) if item.startswith('calls_')))
+    profiletime *= solution.profile_overhead
+    ctwt = zero_safe_division(time,(cputime+profiletime))
 
     if disp:
         #          ("time_storage_behavior", float64),

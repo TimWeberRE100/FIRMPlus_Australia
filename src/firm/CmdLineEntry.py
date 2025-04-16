@@ -128,7 +128,15 @@ def profile(
     solution, time, ctwt = profile(sd.x0, sd, cost_model, False)
     ctwt = ctwt*1000 # seconds to microseconds
     print("\r", " "*25, "\r")
-    print('Warning: profile measure cpu-time. Tables units is wall-time apportioned over cpu-cycles')
+    print("""Warning: 
+profile measures cpu-time. 
+Table times are wall-time apportioned over cpu-cycles
+Not all of the profiling overhead is accounted for. 
+    empirically, unprofiled time is ~30% faster 
+Profiling overhead is not evenly split between components
+    higher level functions (e.g. Transmission) which call lower level funcs
+    have higher proportions of overhead attached
+          """)
     table = Table(title="Profile Results")
     
     table.add_column("Function")
@@ -137,7 +145,18 @@ def profile(
     table.add_column("Cpu-cycles per call")
     table.add_column("Apportioned Time (ms)")
     table.add_column("Time per call")
-    
+
+    calls_profile = sum((getattr(solution, item) for item in dir(solution) if item.startswith('calls_')))
+    time_profile = calls_profile * solution.profile_overhead
+
+    table.add_row(
+        "Profiler overhead", 
+        str(calls_profile), 
+        str(time_profile), 
+        str(solution.profile_overhead), 
+        str(ctwt*time_profile), 
+        str(ctwt*solution.profile_overhead), 
+        )    
     table.add_row(
         "Transmission", 
         str(solution.calls_transmission), 
@@ -174,39 +193,6 @@ def profile(
     #         solution.time_basic,
     #         solution.calls_basic)), 
     #     )
-    table.add_row(
-        "Interconnection",
-        str(solution.calls_interconnection0
-            +solution.calls_interconnection1
-            +solution.calls_interconnection2
-            +solution.calls_interconnection3), 
-        str((solution.time_interconnection0
-            +solution.time_interconnection1
-            +solution.time_interconnection2
-            +solution.time_interconnection3)), 
-        str(zero_safe_division(
-            solution.time_interconnection0
-            +solution.time_interconnection1
-            +solution.time_interconnection2
-            +solution.time_interconnection3,
-            solution.calls_interconnection0
-            +solution.calls_interconnection1
-            +solution.calls_interconnection2
-            +solution.calls_interconnection3)), 
-        str(ctwt*(solution.time_interconnection0
-            +solution.time_interconnection1
-            +solution.time_interconnection2
-            +solution.time_interconnection3)), 
-        str(ctwt*zero_safe_division(
-            solution.time_interconnection0
-            +solution.time_interconnection1
-            +solution.time_interconnection2
-            +solution.time_interconnection3,
-            solution.calls_interconnection0
-            +solution.calls_interconnection1
-            +solution.calls_interconnection2
-            +solution.calls_interconnection3)), 
-        )
     table.add_row(
         "Interconnection0",
         str(solution.calls_interconnection0),
@@ -390,7 +376,7 @@ def profile(
     "-y",
     "--years",
     default=1,
-    type=click.IntRange(0, 10, clamp=True),
+    type=click.IntRange(-1, 10, clamp=True),
     required=False,
     show_default=True,
     help="No. of years to simulate. -1 indicates max",
@@ -501,8 +487,9 @@ def optimise(
     from firm.Optimisation import Optimise
     
     solution_data = Solution_data(*param)
+  
     result, time = Optimise(solution_data, hyperparam)
-    print(result.x)
+    # print(result.x)
 
 @click.command
 @click.option(
@@ -518,7 +505,7 @@ def optimise(
     "-y",
     "--years",
     default=1,
-    type=click.IntRange(0, 10, clamp=True),
+    type=click.IntRange(-1, 10, clamp=True),
     required=False,
     show_default=True,
     help="No. of years to simulate. -1 indicates max",

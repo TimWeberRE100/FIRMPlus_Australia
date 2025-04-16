@@ -9,7 +9,7 @@ Created on Wed Oct  9 07:51:51 2024
 import numpy as np
 from numba import njit  # type: ignore
 
-from firm.Utils import cclock, array_min, array_max_2d_axis1, array_sum_2d_axis0 # type: ignore
+from firm.Utils import cclock, array_min, array_max_2d_axis1, array_sum_2d_axis0, zero_safe_division # type: ignore
 
 
 @njit
@@ -144,7 +144,8 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
                             _usage += _import[m, l]
                         # if usage exceeds capacity
                         if _usage > _capacity[l]:
-                            _scale = _capacity[l]/_usage
+                            # unclear why this raises zero division error from time to time
+                            _scale = zero_safe_division(_capacity[l], _usage)
                             for m in range(solution.nodes):
                                 # clip all legs
                                 if _import[m, l] > 1e-6:

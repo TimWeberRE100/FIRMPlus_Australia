@@ -7,78 +7,101 @@ from numba.typed.typeddict import Dict as TypedDict
 from firm.Simulation import Simulate
 from firm.Utils import zero_safe_division, array_max, cclock
 from firm.Network import generate_network
+from firm.Resource import pv_resource, onw_resource, onw_quality, offwfl_resource, offwfx_resource
 
+Nodel = np.array([
+    'NQ', # Northern Queensland
+    'CQ', # Central Queensland
+    'GG', # Gladstone Grid
+    'SQ', # Southern Queensland
+    'NNSW', # Northern New South Wales
+    'CNSW', # Central New South Wales
+    'SNW', # Sydney-Newcastle-Wollongong
+    'SNSW', # Southern New South Wales
+    'CSA', # Central South Australia
+    'SESA', # South-Eastern South Australia
+    'VIC', # Victoria
+    'TAS', # Tasmania
+    ])
 
-Nodel = np.array(["FNQ", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"])
 PVl = np.array(
-    ["NSW"] * 7
-    + ["FNQ"] * 1
-    + ["QLD"] * 2
-    + ["FNQ"] * 3
-    + ["SA"] * 6
-    + ["TAS"] * 0
-    + ["VIC"] * 1
-    + ["WA"] * 1
-    + ["NT"] * 1
+    ["NNSW"] * 2 +
+    ["CNSW"] * 1 +
+    ["SNSW"] * 5 +
+    ["SNW"] * 1 +
+    ["NQ"] * 3 +
+    ["CQ"] * 3 +
+    ["SQ"] * 3 +
+    ["SESA"] * 1 +
+    ["CSA"] * 8 +
+    ["TAS"] * 3 +
+    ["VIC"] * 6
 )
-Windl = np.array(
-    ["NSW"] * 8
-    + ["FNQ"] * 1
-    + ["QLD"] * 2
-    + ["FNQ"] * 2
-    + ["SA"] * 8
-    + ["TAS"] * 4
-    + ["VIC"] * 4
-    + ["WA"] * 3
-    + ["NT"] * 1
+OnWl = np.array(
+    ["NNSW"] * 2 +
+    ["CNSW"] * 1 +
+    ["SNSW"] * 5 +
+    ["SNW"] * 1 +
+    ["NQ"] * 3 +
+    ["CQ"] * 3 +
+    ["SQ"] * 3 +
+    ["SESA"] * 1 +
+    ["CSA"] * 8 +
+    ["TAS"] * 3 +
+    ["VIC"] * 6
+)
+OffWl = np.array(
+    ["SNW"] * 2 +
+    ["SESA"] * 1 +
+    ["TAS"] * 2 +
+    ["VIC"] * 2
 )
 
 n_node = dict((name, i) for i, name in enumerate(Nodel))
-Nodel_int, PVl_int, Windl_int = (np.array([n_node[node] for node in x], dtype=np.int64) for x in (Nodel, PVl, Windl))
+Nodel_int, PVl_int, OnWl_int, OffWl_int = (np.array([n_node[node] for node in x], dtype=np.int64) for x in (Nodel, PVl, OnWl, OffWl))
 
 MLoad = np.genfromtxt("Data/electricity.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(Nodel))) 
 MLoad /= 1000  # MW to GW
 
-TSPV = np.genfromtxt("Data/pv.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(PVl)))
-TSWind = np.genfromtxt("Data/wind.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(Windl)))
+TSPV = np.genfromtxt("Data/utility_pv.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(PVl)))
+TSOnWH = np.genfromtxt("Data/onshore_high.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(OnWl)))
+TSOnWM = np.genfromtxt("Data/onshore_med.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(OnWl)))
+TSOffW = np.genfromtxt("Data/offshore_fixed.csv", delimiter=",", skip_header=1, usecols=range(4, 4 + len(OffWl)))
 
 assets = np.genfromtxt("Data/hydrobio.csv", dtype=None, delimiter=",", encoding=None)[1:, 1:].astype(float)
 CHydro, CBio = (assets[:, x] * 0.001 for x in range(assets.shape[1])) # MW to GW
-CBaseload = np.array([0, 0, 0, 0, 0, 1.0, 0, 0])  # 24/7, GW
+CBaseload = np.zeros(len(Nodel), np.float64)
+CBaseload[Nodel=='TAS'] = 1.0
 CPeak = CHydro + CBio - CBaseload  # GW
 
-# FQ, NQ, NS, NV, AS, SW, only TV constrained
-lengths = np.array([1500, 1000, 1000, 800, 1200, 2400, 400], dtype=np.int64)
-DCloss = lengths * 0.03 * 0.001  # 3% per 1000 km
-undersea_mask = np.array([0, 0, 0, 0, 0, 0, 1], dtype=bool)
-
 coverage = [
-    np.array(["NSW", "QLD", "SA", "TAS", "VIC"]),
-    np.array(["NSW", "QLD", "SA", "TAS", "VIC", "WA"]),
-    np.array(["NSW", "NT", "QLD", "SA", "TAS", "VIC"]),
-    np.array(["NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"]),
-    np.array(["FNQ", "NSW", "QLD", "SA", "TAS", "VIC"]),
-    np.array(["FNQ", "NSW", "QLD", "SA", "TAS", "VIC", "WA"]),
-    np.array(["FNQ", "NSW", "NT", "QLD", "SA", "TAS", "VIC"]),
-    np.array(["FNQ", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"]),
+    np.array(['NQ', 'CQ', 'GG', 'SQ', 'NNSW', 'CNSW','SNW', 'SNSW', 'CSA', 'SESA', 'VIC', 'TAS']),
+    np.array(['NQ', 'CQ', 'GG', 'SQ', 'NNSW', 'CNSW','SNW', 'SNSW', 'CSA', 'SESA', 'VIC']),
+    np.array(['CQ', 'GG', 'SQ', 'NNSW', 'CNSW','SNW', 'SNSW', 'CSA', 'SESA', 'VIC', 'TAS']),
+    np.array(['CQ', 'GG', 'SQ', 'NNSW', 'CNSW','SNW', 'SNSW', 'CSA', 'SESA', 'VIC']),
 ]
 coverage_int = [np.array([n_node[node] for node in node_array], dtype=np.int64) for node_array in coverage]
 coverage_maxlen = max((len(c) for c in coverage))
 coverage_int = np.stack([np.pad(c, (0, coverage_maxlen - len(c)), constant_values=-1) for c in coverage_int])
 
-
 basic_network = np.array(
     [
-        [0, 3],  # FNQ-QLD
-        [1, 3],  # NSW-QLD
-        [1, 4],  # NSW-SA
-        [1, 6],  # NSW-VIC
-        [2, 4],  # NT-SA
-        [4, 7],  # SA-WA
-        [5, 6],  # TAS-VIC
-    ],
-    dtype=np.int64,
-)
+        ['CQ',   'NQ'], 
+        ['CQ',   'GG'],
+        ['CQ',   'SQ'], 
+        ['NNSW', 'SQ'], 
+        ['CNSW', 'NNSW'],
+        ['CNSW', 'SNW'], 
+        ['CNSW', 'SNSW'], 
+        ['CSA',  'SNSW'], 
+        ['SNSW', 'VIC'], 
+        ['CSA',  'SESA'],
+        ['CSA',  'VIC'],
+        ['TAS',  'VIC'],
+    ]
+    )
+basic_network_int = np.array([n_node[basic_network.ravel()[i]] for i in range(basic_network.size)], 
+                             dtype=np.int64).reshape(basic_network.shape)
 
 data_spec=[
     ("scenario", int64),
@@ -89,7 +112,9 @@ data_spec=[
     ("intervals", int64),
     ("MLoad", float64[:, :]),
     ("TSPV", float64[:, :]),
-    ("TSWind", float64[:, :]),
+    ("TSOnWH", float64[:, :]),
+    ("TSOnWM", float64[:, :]),
+    ("TSOffW", float64[:, :]),
     ("CHydro", float64[:]),
     ("CBio", float64[:]),
     ("CBaseload", float64[:]),
@@ -97,7 +122,8 @@ data_spec=[
     ("coverage_int", int64[:]),
     ("Nodel_int", int64[:]),
     ("PVl_int", int64[:]),
-    ("Windl_int", int64[:]),
+    ("OnWl_int", int64[:]),
+    ("OffWl_int", int64[:]),
     ("basic_network", int64[:, :]),
     ("network", int64[:, :, :, :]),
     ("network_mask", boolean[:]),
@@ -140,21 +166,17 @@ class Solution_data:
             raise Exception
         self.intervals = int(self.years * 8760 / self.resolution)
         
-        if scenario <= 17:
+        if scenario <= 19:
             node = Nodel_int[scenario % 10]
         
-            self.MLoad =  np.atleast_2d(MLoad[: self.intervals,  Nodel_int == node]).T
-            self.TSPV =   np.atleast_2d(TSPV[: self.intervals,   PVl_int ==   node]).T
-            self.TSWind = np.atleast_2d(TSWind[: self.intervals, Windl_int == node]).T
-            
-            self.CHydro =    CHydro[   Nodel_int == node]
-            self.CBio =      CBio[     Nodel_int == node]
-            self.CBaseload = CBaseload[Nodel_int == node]
-            self.CPeak =     CPeak[    Nodel_int == node]
+            node_mask = Nodel_int == node
+            pv_mask =   PVl_int ==   node
+            onsw_mask = OnWl_int ==  node
+            offw_mask = OffWl_int == node
         
-            self.Nodel_int = Nodel_int[Nodel_int == node]
-            self.PVl_int =   PVl_int[  PVl_int ==   node]
-            self.Windl_int = Windl_int[Windl_int == node]
+            self.Nodel_int = Nodel_int[node_mask]
+            self.MLoad =  np.atleast_2d(MLoad[: self.intervals, node_mask]).T
+            
             # Nodel, PVl, Windl = [x[x == node] for x in (Nodel, PVl, Windl)]
             self.basic_network=np.empty((0,0), np.int64)
             self.network = np.empty((0, 0, 0, 0), dtype=np.int64)
@@ -163,25 +185,18 @@ class Solution_data:
             self.trans_mask = np.empty((0, 0), dtype=np.bool_)
             self.triangulars = np.zeros(1, np.int64)
         
-        elif scenario >= 21:
-            self.coverage_int = coverage_int[self.scenario % 10 - 1]
+        elif scenario >= 20:
+            self.coverage_int = coverage_int[self.scenario % 10]
             self.coverage_int = self.coverage_int[self.coverage_int != -1]
         
-            self.MLoad =  MLoad[: self.intervals,  np.isin(Nodel_int, self.coverage_int)]
-            self.TSPV =   TSPV[: self.intervals,   np.isin(PVl_int,   self.coverage_int)]
-            self.TSWind = TSWind[: self.intervals, np.isin(Windl_int, self.coverage_int)]
-            
-            self.CHydro =    CHydro[   np.isin(Nodel_int, self.coverage_int)]
-            self.CBio =      CBio[     np.isin(Nodel_int, self.coverage_int)]
-            self.CBaseload = CBaseload[np.isin(Nodel_int, self.coverage_int)]
-            self.CPeak =     CPeak[    np.isin(Nodel_int, self.coverage_int)]
+            node_mask = np.isin(Nodel_int, self.coverage_int)
+            pv_mask =   np.isin(PVl_int,   self.coverage_int)
+            onsw_mask = np.isin(OnWl_int, self.coverage_int)
+            offw_mask = np.isin(OffWl_int, self.coverage_int)
+
         
-            if int64(0) not in self.coverage_int:
-                self.MLoad[:, np.where(self.coverage_int == 3)[0][0]] /= 0.9
-        
-            self.Nodel_int = Nodel_int[np.isin(Nodel_int, self.coverage_int)]
-            self.PVl_int =   PVl_int[  np.isin(PVl_int,   self.coverage_int)]
-            self.Windl_int = Windl_int[np.isin(Windl_int, self.coverage_int)]
+            self.Nodel_int = Nodel_int[node_mask]
+            self.MLoad =  MLoad[: self.intervals,  node_mask]
         
             with objmode():
                 (self.basic_network, 
@@ -190,17 +205,35 @@ class Solution_data:
                  self.trans_mask, 
                  self.directconns, 
                  self.triangulars,
-                ) = generate_network(basic_network, self.Nodel_int)
+                ) = generate_network(basic_network_int, self.Nodel_int)
             
+            
+        self.PVl_int =   PVl_int[pv_mask]
+        self.OnWl_int = OnWl_int[onsw_mask]
+        self.OffWl_int = OffWl_int[offw_mask]
+
+        self.TSPV[: self.intervals, pv_mask]
+        self.TSOnWH[: self.intervals, onsw_mask]
+        self.TSOnWM[: self.intervals, onsw_mask]
+        self.TSOffW[: self.intervals, offw_mask]
+            
+        self.CHydro =    CHydro[   node_mask]
+        self.CBio =      CBio[     node_mask]
+        self.CBaseload = CBaseload[node_mask]
+        self.CPeak =     CPeak[    node_mask]
+        
         # firstyear, finalyear, timestep = (2020, 2020 + years - 1, 1)
     
         self.nhvi = self.network_mask.sum()
         self.nodes = len(self.Nodel_int)
         
         self.pzones = len(self.PVl_int)
-        self.wzones = len(self.Windl_int)
+        self.wzones = len(self.OnWl_int)
+        self.wozones = len(self.Offl_int)
         self.pidx = self.pzones
-        self.widx = self.pidx + self.wzones
+        self.whidx = self.pidx + self.wzones
+        self.wmidx = self.widx + self.wzones
+        self.wofidx = self.widx + self.wozones
         self.spidx = self.widx + self.nodes
         self.seidx = self.spidx + self.nodes
         
@@ -209,12 +242,19 @@ class Solution_data:
         self.lb = np.array(
             [0.0] * self.pzones + 
             [0.0] * self.wzones + 
+            [0.0] * self.wzones + 
             [0.0] * self.nodes + 
             [0.0] * self.nodes + 
             [0.0] * self.nhvi
             )
+        
+        self.ub = np.array(
+            
+            )
+        
         self.ub = np.array(
             [24.0]  * self.pzones + 
+            [24.0]  * self.wzones + 
             [24.0]  * self.wzones + 
             [24.0]  * self.nodes + 
             [600.0] * self.nodes + 

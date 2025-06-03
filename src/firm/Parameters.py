@@ -7,7 +7,7 @@ class Parameters:
     p: bool # profiling
     
     def __iter__(self):
-        return iter((self.s, self.y, self.p))
+        return iter((self.s, self.t, self.y, self.p))
     
     
 @dataclass

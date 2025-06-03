@@ -14,6 +14,32 @@ from firm.Utils import (
     array_sum_2d_axis1, 
 )  #type: ignore 
 
+@njit
+def SimpleTransmissionSimulate(solution):
+    # we can't port over exactly the same methodology without aggregating the 
+    #    storage energy capacity. We could do that again. 
+    
+    # Consider instead a net import amount? No because then dis/charge logic is
+    #    difficult. I think go back? But then again...
+    
+    
+    
+    for t in range(solution.intervals):
+        for n in range(solution.nodes):
+            solution.MUnbalanced[t,n] = solution.MNetload[t,n] - solution.MFlexible[t,n]
+            
+        for n in range(solution.nodes):
+            solution.MCharge[t, n] = min(-min(0,solution.MUnbalanced[t, n]), solution.CPHP[n], (solution.CPHS[n] - solution.MStorage[t - 1, n]) / solution.efficiency / solution.resolution)
+            solution.MDischarge[t, n] = min(max(0, solution.MUnbalanced[t, n]), solution.CPHP[n], solution.MStorage[t - 1, n] / solution.resolution)
+
+        for n in range(solution.nodes):
+            solution.MStorage[t, n] = solution.MStorage[t - 1, n] + solution.resolution * (solution.MCharge[t, n] * solution.efficiency - solution.MDischarge[t, n])
+
+        for n in range(solution.nodes):
+            _inter = (solution.MUnbalanced[t, n] + solution.MCharge[t, n] - solution.MDischarge[t, n])
+            solution.MDeficit[t, n] = max(0, _inter)
+            solution.MSpillage[t,n] = -min(0, _inter)
+
 
 
 

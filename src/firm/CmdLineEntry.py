@@ -18,7 +18,7 @@ from time import perf_counter
     help="Scenario to run",
 )
 def statistics(
-    scenario: int 
+    scenario: int ,
     ):
     import numpy as np 
     try: 
@@ -28,6 +28,9 @@ def statistics(
         print("No solution found. Run optimisation first.")
         raise e 
     from firm.Statistics import Information
+# =============================================================================
+#     TODO: fix this
+# =============================================================================
     Information(x)
     
     

@@ -4,7 +4,7 @@ from numba import boolean, float64, int64, njit, types, objmode  # type: ignore
 from numba.experimental import jitclass  # type: ignore
 from numba.typed.typeddict import Dict as TypedDict
 
-from firm.Simulation import Simulate
+from firm.Simulation import Simulate, BasicSimulate, SimpleTransmissionSimulate
 from firm.Utils import zero_safe_division, array_max, cclock
 from firm.Network import generate_network
 
@@ -49,7 +49,7 @@ CPeak = CHydro + CBio - CBaseload  # GW
 
 # FQ, NQ, NS, NV, AS, SW, only TV constrained
 lengths = np.array([1500, 1000, 1000, 800, 1200, 2400, 400], dtype=np.int64)
-DCloss = lengths * 0.03 * 0.001  # 3% per 1000 km
+Interloss = lengths * 0.03 * 0.001  # 3% per 1000 km
 undersea_mask = np.array([0, 0, 0, 0, 0, 0, 1], dtype=bool)
 
 coverage = [
@@ -280,12 +280,11 @@ solution_spec = [
     ("MPV", float64[:, :]),
     ("MWind", float64[:, :]),
     ("MLoad", float64[:, :]),
-    ("MBaseload", float64[:, :]),
     ("MHydro", float64[:, :]),
     ("MBio", float64[:, :]),
     ("MUnbalanced", float64[:,:]),
     # Transmission
-    ("TDC", float64[:, :]),
+    ("TInter", float64[:, :]),
     ("Topology", float64[:, :]),
     ("trans_mask", boolean[:, :]),
     ("TImport", float64[:, :, :]),
@@ -399,6 +398,10 @@ class Solution:
         self.cache_tertiary_donors = TypedDict.empty(int64, int64[:, :, :])
         self.cache_quaternary_donors = TypedDict.empty(int64, int64[:, :, :])
         
+        if self.scenario >= 30:
+            self.CPHS = np.array([self.CPHS.sum()])
+            
+        
         self.profile_overhead=0.0
         self.profiling = sd.profiling
         if self.profiling:
@@ -449,14 +452,23 @@ class Solution:
 
         self.MFlexible = np.zeros((self.intervals, self.nodes), dtype=np.float64)
 
-        self.MDischarge = np.zeros((self.intervals, self.nodes), dtype=np.float64)
-        self.MCharge = np.zeros((self.intervals, self.nodes), dtype=np.float64)
-        self.MStorage = np.zeros((self.intervals, self.nodes), dtype=np.float64)
+        if 20 <= self.scenario < 30:
+            self.MDischarge = np.zeros((self.intervals, self.nodes), dtype=np.float64)
+            self.MCharge = np.zeros((self.intervals, self.nodes), dtype=np.float64)
+            self.MStorage = np.zeros((self.intervals, self.nodes), dtype=np.float64)
+        
+        if self.scenario >= 30:
+            self.MDischarge = np.zeros((self.intervals, 1), dtype=np.float64)
+            self.MCharge = np.zeros((self.intervals, 1), dtype=np.float64)
+            self.MStorage = np.zeros((self.intervals, 1), dtype=np.float64)
+        
         self.MStorage[-1] = 0.5 * self.CPHS
 
         self.TImport = np.zeros((self.intervals, self.nodes, self.nhvi), dtype=np.float64)
         self.TExport = np.zeros((self.intervals, self.nodes, self.nhvi), dtype=np.float64)
-        self.TDC = np.zeros((self.intervals, self.nodes), dtype=np.float64)
+        self.TInter = np.zeros((self.intervals, self.nodes), dtype=np.float64)
+
+        
 
 
 #%% 
@@ -464,7 +476,16 @@ class Solution:
 @njit
 def Evaluate(S, cost_model):
     S._instantiate_operations()
-    Simulate(S)
+    if 20 <= S.scenario < 30:
+        Simulate(S)
+    elif S.scenario < 20:
+        BasicSimulate(S)
+    else: 
+        SimpleTransmissionSimulate(S)
+        
+# =============================================================================
+#         TODO: Network module from previous versions
+# =============================================================================
 
     S.Penalties = np.maximum(0, S.MDeficit.sum())*1000  # MWh/resolution
 

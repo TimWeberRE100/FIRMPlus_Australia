@@ -207,3 +207,62 @@ def Interconnection(solution, Fillt, Surplust, Importt, Exportt):
 
     return Importt, Exportt
 
+@njit
+def BasicInterconnection(solution):
+    
+    factor = solution.CPeak / solution.CPeak.sum()
+
+    flexible = solution.flexible.copy()
+    MPeak = (flexible.reshape(-1,1) * pkfactor.reshape(1,-1))
+        
+    MLoad_denominator = solution.MLoad.sum(axis=1)
+    defactor = np.divide(solution.MLoad, MLoad_denominator.reshape(-1, 1))
+    
+    MDeficit = solution.Deficit.copy() # avoids numba error with reshaping below (also MSpillage, MCharge, MDischarge)
+    MDeficit = MDeficit.reshape(-1, 1)  * defactor # MDeficit: EDE(j, t)
+    
+    MPW = MPV + MWind
+    MPW_denominator = np.atleast_2d(MPW.sum(axis=1) + 0.00000001).T
+    spfactor = np.divide(MPW, MPW_denominator)
+    MSpillage = solution.Spillage.copy()
+    MSpillage = MSpillage.reshape(-1, 1) * spfactor # MSpillage: ESP(j, t)
+    
+    CPHP = solution.CPHP
+    
+    dzsm = CPHP != 0 # divide by zero safe mask
+    pcfactor = np.zeros(CPHP.shape)
+    pcfactor[dzsm] =  CPHP[dzsm] / CPHP[dzsm].sum(axis=0)
+    
+    MCharge, MDischarge = solution.Charge.copy(), solution.Discharge.copy()
+    MDischarge = (MDischarge.reshape(-1, 1) * pcfactor)# MDischarge: DPH(j, t)
+    MCharge = (MCharge.reshape(-1, 1) * pcfactor) # MCharge: CHPH(j, t)
+    
+    MImport = solution.MLoad + MCharge + MSpillage \
+              - MPV - MWind - MBaseload - MPeak - MDischarge - MDeficit # EIM(t, j), MW
+    
+    # ['FNQ', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'] = [0, 1, 2, 3, 4, 5, 6, 7] for Nodel = Nodel_int
+    
+    FQ = -1 * MImport[:, np.where(solution.Nodel_int==0)[0][0]] if 0 in solution.Nodel_int else np.zeros(intervals, dtype=np.float64)
+    AS = -1 * MImport[:, np.where(solution.Nodel_int==2)[0][0]] if 2 in solution.Nodel_int else np.zeros(intervals, dtype=np.float64)
+    SW = MImport[:, np.where(solution.Nodel_int==7)[0][0]] if 7 in solution.Nodel_int else np.zeros(intervals, dtype=np.float64)
+    TV = -1 * MImport[:, np.where(solution.Nodel_int==5)[0][0]]
+    
+    NQ = MImport[:, np.where(solution.Nodel_int==3)[0][0]] - FQ
+    NV = MImport[:, np.where(solution.Nodel_int==6)[0][0]] - TV
+    
+    NS = -1. * MImport[:, np.where(solution.Nodel_int==1)[0][0]] - NQ - NV
+    NS1 = MImport[:, np.where(solution.Nodel_int==4)[0][0]] - AS + SW
+    #assert abs(NS - NS1).max()<=0.1, print(abs(NS - NS1).max())
+    
+    TDC = np.stack((FQ, NQ, NS, NV, AS, SW, TV), axis=1) # TDC(t, k), MW
+    
+    if output is True:
+        MStorage = solution.Storage.copy()
+        MStorage = MStorage.reshape(-1,1) * pcfactor # SPH(t, j), MWh
+        solution.MPV, solution.MWind, solution.MBaseload, solution.MPeak = (MPV, MWind,MBaseload, MPeak)
+        solution.MDischarge, solution.MCharge, solution.MStorage = (MDischarge, MCharge, MStorage)
+        solution.MDeficit, solution.MSpillage = (MDeficit, MSpillage)
+    
+    return TDC
+      
+    
